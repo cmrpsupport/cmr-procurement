@@ -1,10 +1,10 @@
 import React, { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
-import { 
+import {
   ArrowLeft, 
-  Upload, 
-  FileText, 
-  Brain, 
+  Upload,
+  FileText,
+  Brain,
   Loader2, 
   Download,
   Eye,
@@ -138,11 +138,11 @@ export default function DocumentAssistant() {
     try {
       console.log("Starting document processing for:", selectedFile.name);
 
-      // Create FormData for file upload
-      const formData = new FormData();
+        // Create FormData for file upload
+        const formData = new FormData();
       formData.append("document", selectedFile);
 
-      // Update processing message based on file type
+          // Update processing message based on file type
       if (selectedFile.type.startsWith("image/")) {
         setProcessingMessage("Running OCR on document...");
       } else if (selectedFile.type === "application/pdf") {
@@ -153,45 +153,45 @@ export default function DocumentAssistant() {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
       
-      const response = await fetch("/api/process-document", {
-        method: "POST",
-        body: formData,
+          const response = await fetch("/api/process-document", {
+            method: "POST",
+            body: formData,
         signal: controller.signal,
-      });
+          });
       
       clearTimeout(timeoutId);
 
-      if (!response.ok) {
+          if (!response.ok) {
         let errorMessage = `HTTP error! status: ${response.status}`;
         try {
-          const errorData = await response.json();
+            const errorData = await response.json();
           errorMessage = errorData.error || errorData.details || errorMessage;
         } catch (parseError) {
           // If we can't parse the error response, use the status text
           errorMessage = response.statusText || errorMessage;
         }
         throw new Error(errorMessage);
-      }
+          }
 
-      const result = await response.json();
+          const result = await response.json();
       console.log("API response:", result);
 
-      // Convert API result to Document format
-      const document: Document = {
-        id: result.id,
-        originalName: result.originalName,
-        renamedName: result.renamedName,
+          // Convert API result to Document format
+          const document: Document = {
+            id: result.id,
+            originalName: result.originalName,
+            renamedName: result.renamedName,
         type: "Delivery Order",
         fileSize: `${(result.fileSize / 1024 / 1024).toFixed(1)} MB`,
-        status: result.status,
-        supplier: result.supplier,
-        poNumber: result.poNumber,
-        projectNumber: result.projectNumber,
-        date: result.date,
-        extractedData: result.extractedData,
-        filePath: result.filePath,
-        uploadTime: new Date().toLocaleString(),
-      };
+            status: result.status,
+            supplier: result.supplier,
+            poNumber: result.poNumber,
+            projectNumber: result.projectNumber,
+            date: result.date,
+            extractedData: result.extractedData,
+            filePath: result.filePath,
+            uploadTime: new Date().toLocaleString(),
+          };
 
       // Add processing analysis info
       const enhancedDocument = {
@@ -294,7 +294,7 @@ export default function DocumentAssistant() {
                                <div className="flex items-center justify-between mb-6">
                      <h2 className="text-xl font-semibold text-foreground">Process Delivery Order</h2>
                      <Badge variant="secondary">AI-Powered</Badge>
-                   </div>
+        </div>
 
             {/* File Upload Section */}
             <div className="space-y-6">
@@ -335,9 +335,9 @@ export default function DocumentAssistant() {
                       <div className="space-y-2">
                                                      <h3 className="text-lg font-medium text-foreground">Document Selected</h3>
                                                   <div className="bg-card border rounded-lg p-4">
-                          <div className="flex items-center space-x-3">
+                              <div className="flex items-center space-x-3">
                                                            <FileText className="w-8 h-8 text-muted-foreground" />
-                            <div className="text-left">
+                                <div className="text-left">
                               <div className="font-medium">{selectedFile.name}</div>
                                                              <div className="text-sm text-muted-foreground">
                                 {(selectedFile.size / 1024 / 1024).toFixed(2)} MB • {selectedFile.type.split('/')[1].toUpperCase()}
@@ -365,15 +365,15 @@ export default function DocumentAssistant() {
                   ) : (
                     <div className="space-y-4">
                                                  <Upload className={`w-12 h-12 mx-auto ${isDragging ? 'text-primary' : 'text-muted-foreground'}`} />
-                           <div>
+                      <div>
                              <h3 className="text-lg font-medium text-foreground mb-2">
                           {isDragging ? 'Drop your document here' : 'Upload Delivery Order'}
                         </h3>
                                                      <p className="text-muted-foreground mb-4">Supports JPG, PNG, PDF formats</p>
-                        <Button onClick={() => fileInputRef.current?.click()}>
-                          <Upload className="w-4 h-4 mr-2" />
+                          <Button onClick={() => fileInputRef.current?.click()}>
+                            <Upload className="w-4 h-4 mr-2" />
                           Choose File
-                        </Button>
+                          </Button>
                                                      <p className="text-xs text-muted-foreground mt-4">
                           AI will extract: Supplier Name, PO Number, Project Number, Delivery Date, and Items
                         </p>
@@ -390,15 +390,15 @@ export default function DocumentAssistant() {
                     </div>
                   </div>
                 )}
-              </div>
-
+                </div>
+                
               {/* Results Section */}
               {showResults && processedDocument && (
                 <div className="pt-6 border-t">
                   <div className="flex items-center justify-between mb-4">
                                              <h3 className="text-lg font-medium text-foreground">Processing Results</h3>
                     <Badge variant="default">Success</Badge>
-                  </div>
+                              </div>
                   
                   <div className="bg-gray-50 rounded-lg p-4 mb-4">
                     <div className="grid grid-cols-2 gap-4 text-sm">
@@ -492,7 +492,7 @@ export default function DocumentAssistant() {
                         {processedDocument.extractedData.items.map((item, index) => (
                           <Badge key={index} variant="outline">
                             {item}
-                          </Badge>
+                        </Badge>
                         ))}
                       </div>
                     </div>
@@ -533,7 +533,7 @@ export default function DocumentAssistant() {
                 </div>
               )}
             </div>
-          </Card>
+            </Card>
         </div>
       </div>
 
@@ -551,44 +551,44 @@ export default function DocumentAssistant() {
           </DialogHeader>
           {selectedDocument && (
             <div className="space-y-6">
-                                     <div className="grid grid-cols-2 gap-4">
-                         <div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
                            <label className="text-sm font-medium text-muted-foreground">Original Name</label>
                            <p className="text-sm text-foreground mt-1">{selectedDocument.originalName}</p>
-                         </div>
-                         <div>
+                </div>
+                <div>
                            <label className="text-sm font-medium text-muted-foreground">Renamed File</label>
                            <p className="text-sm text-foreground mt-1">{selectedDocument.renamedName}</p>
-                         </div>
-                         <div>
+                </div>
+                <div>
                            <label className="text-sm font-medium text-muted-foreground">Document Type</label>
                            <p className="text-sm text-foreground mt-1">{selectedDocument.type}</p>
-                         </div>
-                         <div>
+                </div>
+                <div>
                            <label className="text-sm font-medium text-muted-foreground">File Size</label>
                            <p className="text-sm text-foreground mt-1">{selectedDocument.fileSize}</p>
-                         </div>
-                       </div>
+                </div>
+              </div>
 
-                               <div className="border-t pt-4">
+              <div className="border-t pt-4">
                    <h4 className="font-medium text-foreground mb-3">Extracted Data</h4>
-                   <div className="grid grid-cols-2 gap-4">
-                     <div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
                        <label className="text-sm font-medium text-muted-foreground">Supplier Name</label>
                        <p className="text-sm text-foreground mt-1">{selectedDocument.extractedData?.supplier || 'Not extracted'}</p>
-                     </div>
-                     <div>
+                  </div>
+                  <div>
                        <label className="text-sm font-medium text-muted-foreground">PO Number</label>
                        <p className="text-sm text-foreground mt-1">{selectedDocument.extractedData?.poNumber || 'Not extracted'}</p>
-                     </div>
-                     <div>
+                  </div>
+                  <div>
                        <label className="text-sm font-medium text-muted-foreground">Project Number</label>
                        <p className="text-sm text-foreground mt-1">{selectedDocument.extractedData?.projectNumber || 'Not extracted'}</p>
-                     </div>
-                     <div>
+                  </div>
+                  <div>
                        <label className="text-sm font-medium text-muted-foreground">Date</label>
                        <p className="text-sm text-foreground mt-1">{selectedDocument.extractedData?.date || 'Not extracted'}</p>
-                     </div>
+                  </div>
                   {selectedDocument.extractedData?.deliveryDate && (
                     <div>
                       <label className="text-sm font-medium text-gray-700">Delivery Date</label>

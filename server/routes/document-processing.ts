@@ -54,66 +54,66 @@ const extractDataFromText = (text: string) => {
 
   try {
     // Extract supplier name with improved patterns
-    const supplierPatterns = [
-      /supplier[:\s]+([^\n\r,]+)/i,
-      /vendor[:\s]+([^\n\r,]+)/i,
-      /company[:\s]+([^\n\r,]+)/i,
-      /from[:\s]+([^\n\r,]+)/i,
+  const supplierPatterns = [
+    /supplier[:\s]+([^\n\r,]+)/i,
+    /vendor[:\s]+([^\n\r,]+)/i,
+    /company[:\s]+([^\n\r,]+)/i,
+    /from[:\s]+([^\n\r,]+)/i,
       /delivered by[:\s]+([^\n\r,]+)/i,
       /supplier name[:\s]+([^\n\r,]+)/i,
       /supplier[:\s]*([^\n\r,]+)/i,
       /vendor[:\s]*([^\n\r,]+)/i,
       /company[:\s]*([^\n\r,]+)/i,
-    ];
+  ];
 
-    for (const pattern of supplierPatterns) {
-      const match = text.match(pattern);
+  for (const pattern of supplierPatterns) {
+    const match = text.match(pattern);
       if (match && match[1] && match[1].trim().length > 2) {
-        extractedData.supplier = match[1].trim();
-        break;
-      }
+      extractedData.supplier = match[1].trim();
+      break;
     }
+  }
 
     // Extract PO Number with improved patterns
-    const poPatterns = [
-      /po[:\s]*#?([a-zA-Z0-9\-_]+)/i,
-      /purchase order[:\s]*#?([a-zA-Z0-9\-_]+)/i,
-      /order[:\s]*#?([a-zA-Z0-9\-_]+)/i,
+  const poPatterns = [
+    /po[:\s]*#?([a-zA-Z0-9\-_]+)/i,
+    /purchase order[:\s]*#?([a-zA-Z0-9\-_]+)/i,
+    /order[:\s]*#?([a-zA-Z0-9\-_]+)/i,
       /po number[:\s]*([a-zA-Z0-9\-_]+)/i,
       /order number[:\s]*([a-zA-Z0-9\-_]+)/i,
       /po[:\s]*([a-zA-Z0-9\-_]+)/i,
       /purchase order[:\s]*([a-zA-Z0-9\-_]+)/i,
       /order[:\s]*([a-zA-Z0-9\-_]+)/i,
-    ];
+  ];
 
-    for (const pattern of poPatterns) {
-      const match = text.match(pattern);
+  for (const pattern of poPatterns) {
+    const match = text.match(pattern);
       if (match && match[1] && match[1].trim().length > 2) {
-        extractedData.poNumber = match[1].trim();
-        break;
-      }
+      extractedData.poNumber = match[1].trim();
+      break;
     }
+  }
 
     // Extract Project Number with improved patterns
-    const projectPatterns = [
-      /project[:\s]*#?([a-zA-Z0-9\-_]+)/i,
-      /prj[:\s]*#?([a-zA-Z0-9\-_]+)/i,
-      /job[:\s]*#?([a-zA-Z0-9\-_]+)/i,
+  const projectPatterns = [
+    /project[:\s]*#?([a-zA-Z0-9\-_]+)/i,
+    /prj[:\s]*#?([a-zA-Z0-9\-_]+)/i,
+    /job[:\s]*#?([a-zA-Z0-9\-_]+)/i,
       /project number[:\s]*([a-zA-Z0-9\-_]+)/i,
       /job number[:\s]*([a-zA-Z0-9\-_]+)/i,
-    ];
+  ];
 
-    for (const pattern of projectPatterns) {
-      const match = text.match(pattern);
+  for (const pattern of projectPatterns) {
+    const match = text.match(pattern);
       if (match && match[1] && match[1].trim().length > 2) {
-        extractedData.projectNumber = match[1].trim();
-        break;
-      }
+      extractedData.projectNumber = match[1].trim();
+      break;
     }
+  }
 
     // Extract dates with improved patterns
-    const datePatterns = [
-      /date[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
+  const datePatterns = [
+    /date[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
       /delivery date[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
       /order date[:\s]*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i,
     ];
@@ -127,22 +127,22 @@ const extractDataFromText = (text: string) => {
     }
 
     // Extract total amount with improved patterns
-    const amountPatterns = [
-      /total[:\s]*₱?([0-9,]+\.?[0-9]*)/i,
-      /amount[:\s]*₱?([0-9,]+\.?[0-9]*)/i,
+  const amountPatterns = [
+    /total[:\s]*₱?([0-9,]+\.?[0-9]*)/i,
+    /amount[:\s]*₱?([0-9,]+\.?[0-9]*)/i,
       /grand total[:\s]*₱?([0-9,]+\.?[0-9]*)/i,
-      /₱([0-9,]+\.?[0-9]*)/g,
-    ];
+    /₱([0-9,]+\.?[0-9]*)/g,
+  ];
 
-    for (const pattern of amountPatterns) {
-      const match = text.match(pattern);
-      if (match && match[1]) {
+  for (const pattern of amountPatterns) {
+    const match = text.match(pattern);
+    if (match && match[1]) {
         const amount = match[1].replace(/,/g, '');
         if (parseFloat(amount) > 0) {
           extractedData.totalAmount = `₱${parseFloat(amount).toLocaleString()}`;
-          break;
-        }
-      }
+      break;
+    }
+  }
     }
 
     // Extract items with improved logic for multi-page documents
@@ -154,10 +154,10 @@ const extractDataFromText = (text: string) => {
       "systems", "fixtures", "controls", "instruments", "gear", "kits"
     ];
     
-    const lines = text.split("\n");
-    const items: string[] = [];
+  const lines = text.split("\n");
+  const items: string[] = [];
 
-    for (const line of lines) {
+  for (const line of lines) {
       const cleanLine = line.trim();
       if (cleanLine.length > 3 && cleanLine.length < 100) {
         // Skip page headers and separators
@@ -167,7 +167,7 @@ const extractDataFromText = (text: string) => {
         }
         
         // Check if line contains item keywords
-        for (const keyword of itemKeywords) {
+    for (const keyword of itemKeywords) {
           if (cleanLine.toLowerCase().includes(keyword)) {
             // Clean up the item text
             let item = cleanLine.replace(/^\d+\.\s*/, ''); // Remove numbering
@@ -175,10 +175,10 @@ const extractDataFromText = (text: string) => {
             item = item.replace(/\s+/g, ' ').trim(); // Clean whitespace
             
             if (item.length > 3 && !items.includes(item)) {
-              items.push(item);
-            }
-            break;
-          }
+          items.push(item);
+        }
+        break;
+      }
         }
       }
     }
@@ -202,7 +202,7 @@ const extractDataFromText = (text: string) => {
     console.error("Error during data extraction:", error);
     // Return the data we have so far, even if extraction failed
   }
-  
+
   return extractedData;
 };
 
@@ -384,7 +384,7 @@ export const processDocument: RequestHandler = async (req, res) => {
 
         // Clean up uploaded file
         if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
+        fs.unlinkSync(filePath);
           console.log("Uploaded file cleaned up");
         }
 
@@ -449,8 +449,8 @@ export const processMultipleDocuments: RequestHandler = async (req, res) => {
       const results = [];
       const files = Array.isArray(req.files) ? req.files : [req.files];
 
-              for (const file of files) {
-          try {
+      for (const file of files) {
+        try {
             const filePath = file.path as string;
             const fileType = file.mimetype as string;
           let extractedText = "";

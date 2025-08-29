@@ -100,7 +100,7 @@ export default function PRGenerator() {
     localStorage.removeItem('purchase-requisitions');
     setPurchaseRequisitions([]);
     setCurrentStep(1);
-    setIsLoadingData(false);
+        setIsLoadingData(false);
   }, []);
 
   // Always start fresh - no loading of old data
@@ -241,7 +241,7 @@ export default function PRGenerator() {
           }
           return null;
         };
-
+        
         // Try to find a sheet with BOM format (has 'Maker' and 'Model / Part No.' columns)
         let selectedSheet = workbook.SheetNames[0];
         let worksheet = workbook.Sheets[selectedSheet];
@@ -512,36 +512,36 @@ export default function PRGenerator() {
       let bomFileId = `local-${Date.now()}`;
       
       try {
-        const bomFileResponse = await fetch('/api/bom/files', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            fileName: selectedFile.name,
-            fileSize: selectedFile.size,
-            totalItems,
-            suppliersFound: Object.keys(itemsGrouped).length,
-            processingTime: `${processingTime} seconds`
-          })
-        });
+      const bomFileResponse = await fetch('/api/bom/files', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          fileName: selectedFile.name,
+          fileSize: selectedFile.size,
+          totalItems,
+          suppliersFound: Object.keys(itemsGrouped).length,
+          processingTime: `${processingTime} seconds`
+        })
+      });
 
         if (bomFileResponse.ok) {
-          const bomFile = await bomFileResponse.json();
+      const bomFile = await bomFileResponse.json();
           bomFileId = bomFile.id;
 
-          // Save BOM items to database
-          const bomItems = Object.values(supplierItems).flat();
+      // Save BOM items to database
+      const bomItems = Object.values(supplierItems).flat();
           await fetch('/api/bom/items', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              bomFileId: bomFile.id,
-              items: bomItems
-            })
-          });
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bomFileId: bomFile.id,
+          items: bomItems
+        })
+      });
         } else {
           console.log('Database not available, using local processing');
         }
@@ -612,20 +612,20 @@ export default function PRGenerator() {
 
       // Try to save PRs to database, but fall back to local storage if it fails
       try {
-        const response = await fetch('/api/purchase-requisitions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            bomFileId: processedData.id,
-            purchaseRequisitions: prs
-          })
-        });
+      const response = await fetch('/api/purchase-requisitions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          bomFileId: processedData.id,
+          purchaseRequisitions: prs
+        })
+      });
 
         if (response.ok) {
-          const savedPRs = await response.json();
-          setPurchaseRequisitions(savedPRs);
+      const savedPRs = await response.json();
+      setPurchaseRequisitions(savedPRs);
         } else {
           // Fallback to local processing if API fails
           console.log('Database API not available, using local storage');
@@ -661,26 +661,26 @@ export default function PRGenerator() {
 
     try {
       // Try to save to API first
-      try {
-        const response = await fetch(`/api/purchase-requisitions/${editingPR.id}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            supplier: editingPR.supplier,
-            totalItems: editingPR.totalItems,
-            totalValue: editingPR.totalValue,
-            status: editingPR.status,
-            items: editingPR.items
-          })
-        });
+    try {
+      const response = await fetch(`/api/purchase-requisitions/${editingPR.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          supplier: editingPR.supplier,
+          totalItems: editingPR.totalItems,
+          totalValue: editingPR.totalValue,
+          status: editingPR.status,
+          items: editingPR.items
+        })
+      });
 
         if (response.ok) {
-          const updatedPR = await response.json();
-          setPurchaseRequisitions(prev => 
-            prev.map(pr => pr.id === editingPR.id ? updatedPR : pr)
-          );
+      const updatedPR = await response.json();
+      setPurchaseRequisitions(prev => 
+        prev.map(pr => pr.id === editingPR.id ? updatedPR : pr)
+      );
         } else {
           // Fallback to local storage
           const updatedPRs = purchaseRequisitions.map(pr => 
@@ -977,7 +977,7 @@ export default function PRGenerator() {
                     ) : (
                       <div className="space-y-4">
                                                    <Upload className={`w-12 h-12 mx-auto ${isDragging ? 'text-primary' : 'text-muted-foreground'}`} />
-                           <div>
+                        <div>
                              <h3 className="text-lg font-medium text-foreground mb-2">
                             {isDragging ? 'Drop your BOM file here' : 'Drag and drop your BOM file'}
                           </h3>
@@ -1030,19 +1030,19 @@ export default function PRGenerator() {
                 </CardHeader>
                 <CardContent>
                   {/* File Processing Stats */}
-                                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
                       <div className="text-center p-3 bg-card rounded-lg border">
                         <div className="text-2xl font-bold text-foreground">{processedData.totalItems}</div>
                         <div className="text-sm text-muted-foreground">Total Items</div>
-                      </div>
+                    </div>
                       <div className="text-center p-3 bg-card rounded-lg border">
                                               <div className="text-2xl font-bold text-foreground">{processedData.suppliersFound}</div>
                         <div className="text-sm text-muted-foreground">Suppliers Found</div>
-                      </div>
+                    </div>
                       <div className="text-center p-3 bg-card rounded-lg border">
                         <div className="text-2xl font-bold text-foreground">{Object.keys(processedData.itemsGrouped).length}</div>
                         <div className="text-sm text-muted-foreground">PRs to Generate</div>
-                      </div>
+                    </div>
                       <div className="text-center p-3 bg-card rounded-lg border">
                         <div className="text-2xl font-bold text-foreground">{processedData.processingTime}</div>
                         <div className="text-sm text-muted-foreground">Processing Time</div>
@@ -1287,18 +1287,18 @@ export default function PRGenerator() {
                   <div className="space-y-4">
                     <div className="flex space-x-3">
                       {purchaseRequisitions.some(pr => pr.status === 'Draft') ? (
-                        <Button 
-                          className="flex-1 bg-green-600 hover:bg-green-700"
-                          onClick={() => {
-                            // Mark all PRs as approved
-                            const approvedPRs = purchaseRequisitions.map(pr => ({ ...pr, status: 'Approved' as const }));
-                            setPurchaseRequisitions(approvedPRs);
-                            // Here you could also make API calls to update the database
-                          }}
-                        >
-                          <CheckCircle className="w-4 h-4 mr-2" />
-                          Approve All Purchase Requisitions
-                        </Button>
+                      <Button 
+                        className="flex-1 bg-green-600 hover:bg-green-700"
+                        onClick={() => {
+                          // Mark all PRs as approved
+                          const approvedPRs = purchaseRequisitions.map(pr => ({ ...pr, status: 'Approved' as const }));
+                          setPurchaseRequisitions(approvedPRs);
+                          // Here you could also make API calls to update the database
+                        }}
+                      >
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        Approve All Purchase Requisitions
+                      </Button>
                       ) : (
                         <Button 
                           className="flex-1 bg-orange-600 hover:bg-orange-700"

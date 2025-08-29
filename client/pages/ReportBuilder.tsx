@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { 
-  ArrowLeft, 
+  ArrowLeft,
   Upload, 
-  FileText, 
-  Zap, 
+  FileText,
+  Zap,
   Loader2, 
   Download,
   Eye,
@@ -525,12 +525,12 @@ export default function ReportBuilder() {
                                <div className="flex items-center justify-between mb-6">
                      <h2 className="text-xl font-semibold text-foreground">Single File Enhancement</h2>
                      <Badge variant="secondary">Simple & Fast</Badge>
-                   </div>
+        </div>
 
             {/* File Upload Section */}
             <div className="space-y-6">
               {/* ERP Report Upload */}
-                                   <div>
+                        <div>
                        <h3 className="text-lg font-medium text-foreground mb-3">1. Upload ERP Report</h3>
                 <div
                   className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
@@ -576,9 +576,9 @@ export default function ReportBuilder() {
                         className="hidden"
                       />
                     </div>
-                  )}
-                </div>
-              </div>
+                            )}
+                          </div>
+                        </div>
 
               {/* Template Upload */}
                                    <div>
@@ -605,9 +605,9 @@ export default function ReportBuilder() {
                         >
                           View Template
                         </Button>
-                        <Button
+                        <Button 
                           variant="outline"
-                          size="sm"
+                          size="sm" 
                           onClick={() => {
                             localStorage.removeItem('savedTemplate');
                             setSavedTemplate(null);
@@ -649,22 +649,22 @@ export default function ReportBuilder() {
                   size="lg"
                 >
                   {isProcessing ? (
-                    <>
-                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Processing...
-                    </>
-                  ) : (
-                    <>
-                      <Zap className="w-4 h-4 mr-2" />
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Processing...
+                            </>
+                          ) : (
+                            <>
+                              <Zap className="w-4 h-4 mr-2" />
                       Enhance ERP Report
-                    </>
-                  )}
-                </Button>
+                            </>
+                          )}
+                        </Button>
                                        {analysisMessage && (
                          <p className="mt-2 text-sm text-muted-foreground">{analysisMessage}</p>
                        )}
-              </div>
-            </div>
+                        </div>
+                      </div>
 
             {/* Results Section */}
             {showResults && processedData && (
@@ -678,7 +678,7 @@ export default function ReportBuilder() {
                     >
                       <Download className="w-4 h-4 mr-2" />
                       Download Enhanced Report
-                    </Button>
+                          </Button>
                     <Button
                       onClick={() => {
                         setErpFile(null);
@@ -693,21 +693,21 @@ export default function ReportBuilder() {
                     >
                       <X className="w-4 h-4 mr-2" />
                       Clear Page
-                    </Button>
-                  </div>
-                </div>
+                          </Button>
+                        </div>
+                      </div>
                 
                 <div className="bg-card border rounded-lg p-4 mb-4">
                   <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div>
+                            <div>
                       <span className="font-medium text-foreground">File Name:</span> <span className="text-muted-foreground">{processedData.fileName}</span>
-                    </div>
+                              </div>
                     <div>
                       <span className="font-medium text-foreground">Items Processed:</span> <span className="text-muted-foreground">{processedData.itemCount}</span>
                     </div>
                     <div>
                       <span className="font-medium text-foreground">PO Number:</span> <span className="text-muted-foreground">{processedData.poNumber}</span>
-                    </div>
+                  </div>
                   </div>
                 </div>
 
@@ -746,7 +746,7 @@ export default function ReportBuilder() {
                          )}
               </div>
             )}
-          </Card>
+            </Card>
         </div>
       </div>
 
@@ -754,30 +754,30 @@ export default function ReportBuilder() {
       {showTemplateModal && savedTemplate && (
         <Dialog open={showTemplateModal} onOpenChange={setShowTemplateModal}>
           <DialogContent className="max-w-4xl">
-            <DialogHeader>
+          <DialogHeader>
               <DialogTitle>Template Headers</DialogTitle>
-              <DialogDescription>
+            <DialogDescription>
                 Preferred format template headers for enhanced reports
-              </DialogDescription>
-            </DialogHeader>
+            </DialogDescription>
+          </DialogHeader>
             <div className="max-h-96 overflow-y-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
                     <TableHead className="text-foreground">Column</TableHead>
                     <TableHead className="text-foreground">Header Name</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
                   {savedTemplate.headers.map((header, index) => (
                     <TableRow key={index}>
                       <TableCell className="font-mono text-sm text-foreground">{index + 1}</TableCell>
                       <TableCell className="text-foreground">{header}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
           </DialogContent>
         </Dialog>
       )}
@@ -788,8 +788,8 @@ export default function ReportBuilder() {
           toastType === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'
         }`}>
           {toastMessage}
-        </div>
-      )}
+            </div>
+          )}
     </div>
   );
 }

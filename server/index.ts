@@ -7,18 +7,6 @@ import express from "express";
 import cors from "cors";
 import { handleDemo } from "./routes/demo";
 import { processDocument, processMultipleDocuments } from "./routes/document-processing";
-import { 
-  createBOMFile, 
-  createBOMItems, 
-  getBOMFiles, 
-  getBOMFileById 
-} from "./routes/bom";
-import { 
-  createPurchaseRequisitions, 
-  getPurchaseRequisitions, 
-  updatePurchaseRequisition, 
-  deletePurchaseRequisition 
-} from "./routes/purchase-requisitions";
 
 export function createServer() {
   const app = express();
@@ -39,18 +27,6 @@ export function createServer() {
   // Document processing routes
   app.post("/api/process-document", processDocument);
   app.post("/api/process-documents", processMultipleDocuments);
-
-  // BOM routes
-  app.post("/api/bom/files", createBOMFile);
-  app.post("/api/bom/items", createBOMItems);
-  app.get("/api/bom/files", getBOMFiles);
-  app.get("/api/bom/files/:id", getBOMFileById);
-
-  // Purchase Requisition routes
-  app.post("/api/purchase-requisitions", createPurchaseRequisitions);
-  app.get("/api/purchase-requisitions", getPurchaseRequisitions);
-  app.put("/api/purchase-requisitions/:id", updatePurchaseRequisition);
-  app.delete("/api/purchase-requisitions/:id", deletePurchaseRequisition);
 
   return app;
 }
