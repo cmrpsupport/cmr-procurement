@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: cmr-procurement
+    env: node
+    buildCommand: npm run render-build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+    autoDeploy: true
