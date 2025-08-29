@@ -16,8 +16,8 @@ export function createServer() {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-  // Example API routes
-  app.get("/api/ping", (_req, res) => {
+  // Simple API routes with explicit patterns
+  app.get("/api/ping", (req, res) => {
     const ping = process.env.PING_MESSAGE ?? "ping";
     res.json({ message: ping });
   });
@@ -27,6 +27,11 @@ export function createServer() {
   // Document processing routes
   app.post("/api/process-document", processDocument);
   app.post("/api/process-documents", processMultipleDocuments);
+
+  // Health check route
+  app.get("/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
 
   return app;
 }
