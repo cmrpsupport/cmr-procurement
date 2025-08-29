@@ -1,6 +1,6 @@
 import path from "path";
 import { createServer } from "./index";
-import * as express from "express";
+import express from "express";
 
 const app = createServer();
 const port = process.env.PORT || 3000;
@@ -17,12 +17,27 @@ const distPath = path.join(__dirname, "../spa");
 app.use(express.static(distPath));
 
 // Handle React Router - serve index.html for all non-API routes
-app.get("/*", (req, res) => {
-  // Don't serve index.html for API routes
+app.get("/", (req, res) => {
+  res.sendFile(path.join(distPath, "index.html"));
+});
+
+app.get("/report-builder", (req, res) => {
+  res.sendFile(path.join(distPath, "index.html"));
+});
+
+app.get("/document-assistant", (req, res) => {
+  res.sendFile(path.join(distPath, "index.html"));
+});
+
+app.get("/pr-generator", (req, res) => {
+  res.sendFile(path.join(distPath, "index.html"));
+});
+
+// Catch-all for other routes (but not API routes)
+app.get("*", (req, res) => {
   if (req.path.startsWith("/api/") || req.path.startsWith("/health")) {
     return res.status(404).json({ error: "API endpoint not found" });
   }
-
   res.sendFile(path.join(distPath, "index.html"));
 });
 
