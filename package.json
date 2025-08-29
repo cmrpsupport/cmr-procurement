@@ -67,10 +67,7 @@
     "sonner": "^1.7.4",
     "tailwindcss-animate": "^1.0.7",
     "three": "^0.176.0",
-    "vaul": "^1.1.2"
-  },
-  "devDependencies": {
-    "@hookform/resolvers": "^5.2.1",
+    "vaul": "^1.1.2",
     "@radix-ui/react-accordion": "^1.2.11",
     "@radix-ui/react-alert-dialog": "^1.1.14",
     "@radix-ui/react-aspect-ratio": "^1.1.7",
@@ -101,6 +98,9 @@
     "@react-three/drei": "^9.122.0",
     "@react-three/fiber": "^8.18.0",
     "@swc/core": "^1.13.3",
+    "@hookform/resolvers": "^5.2.1"
+  },
+  "devDependencies": {
     "@tailwindcss/typography": "^0.5.16",
     "@types/three": "^0.176.0",
     "prettier": "^3.6.2",
