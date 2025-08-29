@@ -13,7 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const distPath = path.join(__dirname, "../spa");
 
-// Serve static files
+// Serve static files from the dist/spa directory
 app.use(express.static(distPath));
 
 // Handle React Router - serve index.html for all non-API routes
@@ -45,6 +45,7 @@ app.listen(port, () => {
   console.log(`🚀 Fusion Starter server running on port ${port}`);
   console.log(`📱 Frontend: http://localhost:${port}`);
   console.log(`🔧 API: http://localhost:${port}/api`);
+  console.log(`📁 Static files served from: ${distPath}`);
 });
 
 // Graceful shutdown

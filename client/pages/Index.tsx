@@ -43,6 +43,11 @@ export default function Index() {
                   src="/cmr-logo.png"
                   alt="CMR Logo"
                   className="h-8 w-auto"
+                  onError={(e) => {
+                    console.error("Failed to load logo:", e);
+                    // Fallback to text if image fails
+                    e.currentTarget.style.display = 'none';
+                  }}
                 />
               </div>
               <span className="text-xl font-semibold text-foreground">CMR Procurement</span>
