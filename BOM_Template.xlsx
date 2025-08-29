@@ -1,0 +1,29 @@
+# BOM Template for Purchase Requisition Generator
+
+## Expected Column Structure:
+
+| Model / Part No. | Description | Quantity | Maker |
+|------------------|-------------|----------|-------|
+| ABC-001 | Steel Pipe 2" | 10 | ABC Supplies |
+| DEF-002 | Valve Assembly | 5 | TechCorp |
+| GHI-003 | Cement Bag 50kg | 20 | Global Parts |
+
+## Column Requirements:
+
+### Required Columns:
+1. **Model / Part No.** - Part identifier (any format)
+2. **Maker** - Supplier/Manufacturer name
+
+### Optional Columns:
+3. **Description** - Item description
+4. **Quantity** - Number of items needed
+
+## File Format Support:
+- Excel (.xlsx, .xls, .xlsb)
+- CSV (.csv)
+
+## Notes:
+- Column names are case-insensitive
+- Partial matches are supported (e.g., "part" will match "Model / Part No.")
+- Empty rows are automatically skipped
+- Missing optional columns will use default values
