@@ -63,6 +63,7 @@ export default defineConfig(({ mode }) => ({
   build: {
     outDir: "dist/spa",
   },
+  publicDir: "public", // Ensure public directory is copied
   plugins: [react(), copyPublicFiles(), expressPlugin()],
   resolve: {
     alias: {

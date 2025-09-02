@@ -5,6 +5,8 @@ import { config } from "dotenv";
 config();
 import express from "express";
 import cors from "cors";
+import path from "path";
+import fs from "fs";
 import { handleDemo } from "./routes/demo";
 import { processDocument, processMultipleDocuments } from "./routes/document-processing";
 import { initDatabase, getAllDocuments, getDocumentById, deleteDocument } from "./database";
@@ -71,6 +73,47 @@ export function createServer() {
   app.use(cors());
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+  // Serve static assets like logo
+  app.get("/cmr-logo.png", (req, res) => {
+    const possiblePaths = [
+      path.join(process.cwd(), "public/cmr-logo.png"),
+      path.join(process.cwd(), "dist/spa/cmr-logo.png"),
+      path.join(__dirname, "../public/cmr-logo.png"),
+      path.join(__dirname, "../dist/spa/cmr-logo.png")
+    ];
+    
+    for (const logoPath of possiblePaths) {
+      if (fs.existsSync(logoPath)) {
+        console.log(`Serving logo from: ${logoPath}`);
+        return res.sendFile(logoPath);
+      }
+    }
+    
+    console.log("Logo not found in any of these paths:", possiblePaths);
+    res.status(404).json({ error: "Logo not found", searchedPaths: possiblePaths });
+  });
+
+  // Debug route to check file system
+  app.get("/api/debug-logo", (req, res) => {
+    const possiblePaths = [
+      path.join(process.cwd(), "public/cmr-logo.png"),
+      path.join(process.cwd(), "dist/spa/cmr-logo.png"),
+      path.join(__dirname, "../public/cmr-logo.png"),
+      path.join(__dirname, "../dist/spa/cmr-logo.png")
+    ];
+    
+    const pathsStatus = possiblePaths.map(p => ({
+      path: p,
+      exists: fs.existsSync(p)
+    }));
+    
+    res.json({
+      cwd: process.cwd(),
+      __dirname,
+      paths: pathsStatus
+    });
+  });
 
   // API routes
   app.get("/api/ping", (req, res) => {
