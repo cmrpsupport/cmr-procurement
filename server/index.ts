@@ -78,29 +78,8 @@ export function createServer() {
     res.json({ message: ping });
   });
 
-  // Test Google Vision API configuration
-  app.get("/api/test-google-vision", async (req, res) => {
-    try {
-      const { createGoogleVisionService } = await import("./services/google-vision-service");
-      const visionService = createGoogleVisionService();
-      const connectionTest = await visionService.testConnection();
-      
-      res.json({ 
-        status: "success", 
-        connected: connectionTest,
-        projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
-        credentialsPath: process.env.GOOGLE_APPLICATION_CREDENTIALS
-      });
-    } catch (error) {
-      console.error("Google Vision test error:", error);
-      res.status(500).json({ 
-        status: "error", 
-        message: error instanceof Error ? error.message : "Unknown error",
-        projectId: process.env.GOOGLE_CLOUD_PROJECT_ID,
-        credentialsPath: process.env.GOOGLE_APPLICATION_CREDENTIALS
-      });
-    }
-  });
+  // Google Vision test endpoint removed - service no longer used
+  // App now uses client-side PDF.js + Tesseract for better performance
 
   app.get("/api/demo", handleDemo);
 
