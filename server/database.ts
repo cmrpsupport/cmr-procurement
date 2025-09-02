@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { SqliteAiService, createSqliteAiService } from './services/sqlite-ai-service.js';
 
 // Type definitions
 interface DocumentRow {
@@ -57,13 +58,32 @@ const __dirname = dirname(__filename);
 // Database path
 const DB_PATH = path.join(__dirname, '../database.db');
 
-// Initialize database
+// Database instances
 let db: Database.Database;
+let sqliteAiService: SqliteAiService | null = null;
+let useRemoteDb = false;
 
-export const initDatabase = () => {
+export const initDatabase = async () => {
   try {
+    // SQLite.ai connection temporarily disabled - using local SQLite
+    // Uncomment below when you want to use remote database
+    /*
+    try {
+      sqliteAiService = createSqliteAiService();
+      const connected = await sqliteAiService.testConnection();
+      if (connected) {
+        console.log('SQLite.ai remote database connected successfully');
+        useRemoteDb = true;
+        return sqliteAiService;
+      }
+    } catch (error) {
+      console.log('SQLite.ai not available, falling back to local database:', error.message);
+    }
+    */
+    
+    // Fallback to local SQLite
     db = new Database(DB_PATH);
-    console.log('SQLite database connected successfully');
+    console.log('Local SQLite database connected successfully');
     
     // Enable foreign keys
     db.pragma('foreign_keys = ON');
@@ -78,9 +98,12 @@ export const initDatabase = () => {
   }
 };
 
-export const getDatabase = () => {
-  if (!db) {
-    return initDatabase();
+export const getDatabase = async () => {
+  if (useRemoteDb && sqliteAiService) {
+    return sqliteAiService;
+  }
+  if (!db && !useRemoteDb) {
+    return await initDatabase();
   }
   return db;
 };

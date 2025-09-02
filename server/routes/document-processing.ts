@@ -6,7 +6,7 @@ import path from "path";
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { saveDocument } from "../database";
-import { createGoogleVisionService, GoogleVisionDocumentService } from "../services/google-vision-service";
+// Google Vision service removed - using Tesseract + PDF.js instead
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1237,49 +1237,8 @@ const processImageWithTesseract = async (filePath: string, fileName: string): Pr
   }
 };
 
-// Process PDF with Google Vision AI API (reads PDF as image data)
-const processPDFWithGoogleVision = async (filePath: string, fileName: string): Promise<any> => {
-  let visionService: GoogleVisionDocumentService | null = null;
-  
-  try {
-    console.log("Processing PDF with Google Vision AI:", fileName);
-    
-    // Check if file exists
-    if (!fs.existsSync(filePath)) {
-      throw new Error(`File not found: ${filePath}`);
-    }
-    
-    // Check file size
-    const stats = fs.statSync(filePath);
-    console.log("File size:", stats.size, "bytes");
-    
-    if (stats.size === 0) {
-      throw new Error("File is empty");
-    }
-    
-    // Create Google Vision service instance
-    visionService = createGoogleVisionService();
-    
-    // Process PDF using Google Vision AI (it can handle PDF directly)
-    console.log("Starting Google Vision AI PDF processing...");
-    const extractedData = await visionService.processDocument(filePath, fileName);
-    
-    console.log("Google Vision AI PDF processing completed successfully");
-    console.log("Extracted data:", extractedData);
-    
-    return {
-      ...extractedData,
-      documentType: "pdf_vision_ai"
-    };
-    
-  } catch (error) {
-    console.error("Google Vision AI PDF processing error:", error);
-    
-    // Fallback to basic PDF text extraction if Google Vision fails
-    console.log("Google Vision AI processing failed, using basic PDF fallback");
-    return await processBasicPDF(filePath, fileName);
-  }
-};
+// Google Vision processing removed - app now uses client-side PDF.js + Tesseract
+// This provides better performance and eliminates server-side dependencies
 
 // Fallback PDF processing for when Klippa fails
 const processBasicPDF = async (filePath: string, fileName: string): Promise<any> => {
@@ -1523,14 +1482,29 @@ export const processDocument: RequestHandler = async (req, res) => {
             };
           }
         } else if (fileType === "application/pdf") {
-          console.log("Processing as PDF file with Google Vision AI");
-          try {
-            extractedData = await processPDFWithGoogleVision(filePath, req.file.originalname);
-            console.log("Google Vision AI processing completed successfully");
-          } catch (visionError) {
-            console.error("Google Vision AI processing failed:", visionError);
-            throw new Error(`Google Vision AI failed: ${visionError instanceof Error ? visionError.message : 'Unknown vision error'}`);
-          }
+          console.log("PDF uploaded but no pre-extracted text provided");
+          console.log("Please use the client-side PDF.js + Tesseract processing instead");
+          
+          // Return a message indicating client-side processing is preferred
+          extractedData = {
+            supplier: "",
+            poNumber: "",
+            projectNumber: "",
+            jobNumber: "",
+            doNumber: "",
+            date: "",
+            deliveryDate: "",
+            items: [],
+            pageCount: 1,
+            documentType: "pdf_server_fallback",
+            confidence: 0.0,
+            rawData: {
+              message: "Please use client-side PDF processing for better results",
+              fileName: req.file.originalname,
+              fileSize: req.file.size,
+              processingMethod: "server_fallback"
+            }
+          };
         } else {
           throw new Error(`Unsupported file type: ${fileType}`);
         }
@@ -1631,8 +1605,27 @@ export const processMultipleDocuments: RequestHandler = async (req, res) => {
             console.log("Processing image file with Tesseract:", file.originalname);
             extractedData = await processImageWithTesseract(filePath, file.originalname as string);
           } else if (fileType === "application/pdf") {
-            console.log("Processing PDF file with Google Vision AI:", file.originalname);
-            extractedData = await processPDFWithGoogleVision(filePath, file.originalname as string);
+            console.log("PDF file detected - using Tesseract fallback processing:", file.originalname);
+            // For batch processing, we'll use a simple fallback since client-side processing is preferred
+            extractedData = {
+              supplier: "",
+              poNumber: "",
+              projectNumber: "",
+              jobNumber: "",
+              doNumber: "",
+              date: "",
+              deliveryDate: "",
+              items: [],
+              pageCount: 1,
+              documentType: "pdf_batch_fallback",
+              confidence: 0.0,
+              rawData: {
+                message: "Batch PDF processing - use individual upload for better OCR results",
+                fileName: file.originalname,
+                fileSize: file.size,
+                processingMethod: "batch_fallback"
+              }
+            };
           } else {
             throw new Error(`Unsupported file type: ${fileType}`);
           }
