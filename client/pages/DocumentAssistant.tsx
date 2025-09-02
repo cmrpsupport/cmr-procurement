@@ -360,13 +360,28 @@ export default function DocumentAssistant() {
             });
           }
         } else {
-          // Handle image files with existing API
+          // Handle image files with progress tracking
+          console.log("Processing image file:", file.name);
+          
+          // Start progress tracking for images
+          const startTime = Date.now();
+          setProcessingStartTime(startTime);
+          setProcessingStage("Preparing image for OCR...");
+          setProcessingProgress(10);
+          setTotalPages(1); // Images are single page
+          setEstimatedTimeRemaining("Processing...");
+          
           const formData = new FormData();
           formData.append("document", file);
 
+          // Update progress during processing
+          updateProgress(0.3, 1, "Uploading image to server...", startTime);
+          
           // Call the API endpoint with timeout
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+          
+          updateProgress(0.5, 1, "Server processing with Tesseract OCR...", startTime);
           
           response = await fetch("/api/process-document", {
             method: "POST",
@@ -375,6 +390,8 @@ export default function DocumentAssistant() {
           });
           
           clearTimeout(timeoutId);
+          
+          updateProgress(1, 1, "Image processing completed!", startTime);
         }
 
         if (!response.ok) {
@@ -927,9 +944,13 @@ export default function DocumentAssistant() {
                         {/* Current Stage */}
                         <div className="space-y-2">
                           <p className="text-sm font-medium text-foreground">{processingStage}</p>
-                          {totalPages > 1 && (
+                          {totalPages > 1 ? (
                             <p className="text-xs text-muted-foreground">
                               Processing page {Math.ceil(currentPageProgress)} of {totalPages}
+                            </p>
+                          ) : totalPages === 1 && (
+                            <p className="text-xs text-muted-foreground">
+                              Single page processing
                             </p>
                           )}
                         </div>
@@ -945,7 +966,9 @@ export default function DocumentAssistant() {
                         {/* Processing Method Info */}
                         <div className="text-center">
                           <p className="text-xs text-muted-foreground">
-                            {totalPages > 1 ? 'Multi-page PDF' : 'Single page'} • PDF.js + Tesseract OCR
+                            {totalPages > 1 ? 'Multi-page PDF • PDF.js + Tesseract OCR' : 
+                             totalPages === 1 && selectedFiles.length > 0 && selectedFiles[currentProcessingIndex - 1]?.type.startsWith('image/') ? 'Image • Tesseract OCR' : 
+                             'Single page • PDF.js + Tesseract OCR'}
                           </p>
                         </div>
                       </div>
