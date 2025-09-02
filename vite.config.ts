@@ -10,17 +10,25 @@ function copyPublicFiles(): Plugin {
     name: "copy-public-files",
     generateBundle() {
       // Copy logo file to build output
-      const logoPath = path.resolve(__dirname, "public/cmr-logo.png");
-      const faviconPath = path.resolve(__dirname, "public/favicon.ico");
-      const placeholderPath = path.resolve(__dirname, "public/placeholder.svg");
-      const robotsPath = path.resolve(__dirname, "public/robots.txt");
+      const publicDir = path.resolve(process.cwd(), "public");
+      const logoPath = path.join(publicDir, "cmr-logo.png");
+      const faviconPath = path.join(publicDir, "favicon.ico");
+      const placeholderPath = path.join(publicDir, "placeholder.svg");
+      const robotsPath = path.join(publicDir, "robots.txt");
+      
+      console.log("copyPublicFiles: Checking paths...");
+      console.log("publicDir:", publicDir);
+      console.log("logoPath:", logoPath, "exists:", fs.existsSync(logoPath));
       
       if (fs.existsSync(logoPath)) {
+        console.log("copyPublicFiles: Emitting logo file");
         this.emitFile({
           type: "asset",
           fileName: "cmr-logo.png",
           source: fs.readFileSync(logoPath)
         });
+      } else {
+        console.warn("copyPublicFiles: Logo file not found at", logoPath);
       }
       
       if (fs.existsSync(faviconPath)) {
