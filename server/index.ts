@@ -151,18 +151,27 @@ export function createServer() {
       path.join(process.cwd(), "public/cmr-logo.png"),
       path.join(process.cwd(), "dist/spa/cmr-logo.png"),
       path.join(__dirname, "../public/cmr-logo.png"),
-      path.join(__dirname, "../dist/spa/cmr-logo.png")
+      path.join(__dirname, "../dist/spa/cmr-logo.png"),
+      path.join(__dirname, "../../public/cmr-logo.png")
     ];
     
     const pathsStatus = possiblePaths.map(p => ({
       path: p,
-      exists: fs.existsSync(p)
+      exists: fs.existsSync(p),
+      size: fs.existsSync(p) ? fs.statSync(p).size : null
     }));
+    
+    // Check if static middleware is working
+    const staticMiddlewareTest = fs.readdirSync(process.cwd()).slice(0, 5);
     
     res.json({
       cwd: process.cwd(),
       __dirname,
-      paths: pathsStatus
+      environment: process.env.NODE_ENV || 'development',
+      paths: pathsStatus,
+      rootFiles: staticMiddlewareTest,
+      logoUrl: '/cmr-logo.png',
+      testMessage: 'Check these paths to see where your logo should be placed on Render'
     });
   });
 

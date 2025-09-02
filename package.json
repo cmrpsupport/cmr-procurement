@@ -15,7 +15,7 @@
     "build": "npm run build:client && npm run copy-assets && npm run build:server",
     "build:client": "vite build",
     "build:server": "vite build --config vite.config.server.ts",
-    "copy-assets": "cp public/cmr-logo.png dist/spa/cmr-logo.png 2>/dev/null || copy public\\cmr-logo.png dist\\spa\\cmr-logo.png 2>nul || echo 'Logo copy failed'",
+    "copy-assets": "mkdir -p dist/spa 2>/dev/null && cp public/cmr-logo.png dist/spa/cmr-logo.png 2>/dev/null || (mkdir dist\\spa 2>nul & copy public\\cmr-logo.png dist\\spa\\cmr-logo.png 2>nul) || echo 'Logo copy may have failed - check build logs'",
     "start": "node dist/server/node-build.mjs",
     "render-build": "npm run build",
     "test": "vitest --run",
