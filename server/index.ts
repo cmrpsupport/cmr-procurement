@@ -79,20 +79,34 @@ export function createServer() {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-  // Serve static files from public directory
+  // Serve static files from public directory (multiple paths for different environments)
   const publicPaths = [
     path.join(process.cwd(), "public"),
     path.join(process.cwd(), "dist/spa"),
     path.join(__dirname, "../public"),
-    path.join(__dirname, "../dist/spa")
+    path.join(__dirname, "../dist/spa"),
+    path.join(__dirname, "../../public") // Additional path for production
   ];
   
+  // Try to serve from multiple paths to ensure static files work
+  let staticFileServed = false;
   for (const publicPath of publicPaths) {
     if (fs.existsSync(publicPath)) {
       console.log(`Serving static files from: ${publicPath}`);
-      app.use(express.static(publicPath));
-      break;
+      app.use(express.static(publicPath, {
+        maxAge: '1d', // Cache static files for 1 day
+        setHeaders: (res, path) => {
+          if (path.endsWith('.png')) {
+            res.setHeader('Content-Type', 'image/png');
+          }
+        }
+      }));
+      staticFileServed = true;
     }
+  }
+  
+  if (!staticFileServed) {
+    console.log('Warning: No public directory found for static file serving');
   }
 
   // Serve static assets like logo

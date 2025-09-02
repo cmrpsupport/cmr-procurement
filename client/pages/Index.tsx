@@ -45,8 +45,9 @@ export default function Index() {
                   className="h-8 w-auto"
                   onError={(e) => {
                     console.error("Failed to load logo:", e);
-                    // Fallback to text if image fails
-                    e.currentTarget.style.display = 'none';
+                    // Fallback to SVG logo if PNG fails
+                    const target = e.currentTarget;
+                    target.src = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjMyIiB2aWV3Qm94PSIwIDAgMTAwIDMyIiBmaWxsPSJub25lIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgo8cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjMyIiByeD0iNCIgZmlsbD0iIzMzNzNkYyIvPgo8dGV4dCB4PSI1MCIgeT0iMjAiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IndoaXRlIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIj5DTVJQUzwvdGV4dD4KPHN2Zz4=";
                   }}
                 />
               </div>
