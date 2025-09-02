@@ -74,24 +74,56 @@ export function createServer() {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+  // Serve static files from public directory
+  const publicPaths = [
+    path.join(process.cwd(), "public"),
+    path.join(process.cwd(), "dist/spa"),
+    path.join(__dirname, "../public"),
+    path.join(__dirname, "../dist/spa")
+  ];
+  
+  for (const publicPath of publicPaths) {
+    if (fs.existsSync(publicPath)) {
+      console.log(`Serving static files from: ${publicPath}`);
+      app.use(express.static(publicPath));
+      break;
+    }
+  }
+
   // Serve static assets like logo
   app.get("/cmr-logo.png", (req, res) => {
-    const possiblePaths = [
-      path.join(process.cwd(), "public/cmr-logo.png"),
-      path.join(process.cwd(), "dist/spa/cmr-logo.png"),
-      path.join(__dirname, "../public/cmr-logo.png"),
-      path.join(__dirname, "../dist/spa/cmr-logo.png")
-    ];
-    
-    for (const logoPath of possiblePaths) {
-      if (fs.existsSync(logoPath)) {
-        console.log(`Serving logo from: ${logoPath}`);
-        return res.sendFile(logoPath);
+    try {
+      const possiblePaths = [
+        path.resolve(process.cwd(), "public/cmr-logo.png"),
+        path.resolve(process.cwd(), "dist/spa/cmr-logo.png"),
+        path.resolve(__dirname, "../public/cmr-logo.png"),
+        path.resolve(__dirname, "../dist/spa/cmr-logo.png"),
+        path.resolve(__dirname, "../../public/cmr-logo.png")
+      ];
+      
+      for (const logoPath of possiblePaths) {
+        if (fs.existsSync(logoPath)) {
+          console.log(`Serving logo from: ${logoPath}`);
+          res.setHeader('Content-Type', 'image/png');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          
+          // Try sendFile first, fallback to direct read if it fails
+          try {
+            return res.sendFile(path.resolve(logoPath));
+          } catch (sendFileError) {
+            console.log("sendFile failed, trying direct read:", sendFileError);
+            const logoBuffer = fs.readFileSync(logoPath);
+            return res.send(logoBuffer);
+          }
+        }
       }
+      
+      console.log("Logo not found in any of these paths:", possiblePaths);
+      res.status(404).json({ error: "Logo not found", searchedPaths: possiblePaths });
+    } catch (error) {
+      console.error("Error serving logo:", error);
+      res.status(500).json({ error: "Internal server error serving logo", details: error.message });
     }
-    
-    console.log("Logo not found in any of these paths:", possiblePaths);
-    res.status(404).json({ error: "Logo not found", searchedPaths: possiblePaths });
   });
 
   // Debug route to check file system
