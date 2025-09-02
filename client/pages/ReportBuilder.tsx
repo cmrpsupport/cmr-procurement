@@ -105,43 +105,37 @@ export default function ReportBuilder() {
     }
   };
 
-  const handleTemplateUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleTemplateUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
-      // Simulate reading the template file and extracting headers
-      const templateHeaders = [
-        "S/N",
-        "Work Order Number", 
-        "Client",
-        "Vendor",
-        "P.O Number",
-        "PO Issued Date",
-        "P.R Number",
-        "PR Issued Date",
-        "PR Prepared by",
-        "Item No",
-        "Item Description",
-        "Order Qty",
-        "Unit",
-        "Unit Price",
-        "Total Price",
-        "Vendor Acknowledgement",
-        "Required Delivery Date",
-        "Vendor Est Delivery Date (ETA)",
-        "Actual Receiving Date",
-        "Status update/Comments"
-      ];
-      
-      const templateData = {
-        name: file.name,
-        headers: templateHeaders,
-        savedDate: new Date().toLocaleDateString()
-      };
-      
-      setSavedTemplate(templateData);
-      localStorage.setItem('savedTemplate', JSON.stringify(templateData));
-      
-      showToastMessage("✅ Template uploaded and saved successfully!", "success");
+      try {
+        // Actually read the template file and extract real headers
+        const content = await readFileContent(file);
+        const lines = content.split('\n');
+        const headers = lines[0]?.split(',').map(header => header.trim().replace(/^"|"$/g, '')) || [];
+        
+        console.log('Template headers extracted:', headers);
+        
+        // Validate that we have headers
+        if (headers.length === 0) {
+          showToastMessage("❌ Could not extract headers from template file", "error");
+          return;
+        }
+        
+        const templateData = {
+          name: file.name,
+          headers: headers,
+          savedDate: new Date().toLocaleDateString()
+        };
+        
+        setSavedTemplate(templateData);
+        localStorage.setItem('savedTemplate', JSON.stringify(templateData));
+        
+        showToastMessage(`✅ Template uploaded! Found ${headers.length} columns`, "success");
+      } catch (error) {
+        console.error('Error reading template file:', error);
+        showToastMessage("❌ Error reading template file. Please check the format.", "error");
+      }
     }
   };
 
@@ -176,8 +170,8 @@ export default function ReportBuilder() {
     if (!processedData) return;
     
     try {
-      // Use the actual headers from the template or default headers
-      const headers = savedTemplate?.headers || [
+      // Fixed preferred format headers
+      const headers = [
         "S/N",
         "Work Order Number", 
         "Client",
@@ -193,6 +187,9 @@ export default function ReportBuilder() {
         "Unit",
         "Unit Price",
         "Total Price",
+        "DO Number",
+        "Qty Received",
+        "Qty Outstanding",
         "Vendor Acknowledgement",
         "Required Delivery Date",
         "Vendor Est Delivery Date (ETA)",
@@ -200,39 +197,91 @@ export default function ReportBuilder() {
         "Status update/Comments"
       ];
 
-      // Transform the processed data to enhanced format
-      const enhancedData = processedData.processedData.map((item: any, index: number) => {
+      // Create a mapping function that intelligently maps ERP data to template columns
+      const mapDataToTemplate = (item: any, index: number) => {
         const mapped = item.mappedData;
+        const row: string[] = [];
         
-        return [
-          "", // S/N (kept blank as requested)
-          mapped.workOrderNumber || `WO-${String(index + 1).padStart(3, '0')}`, // Work Order Number
-          "", // Client (kept blank as requested)
-          mapped.vendor || "Vendor from ERP", // Vendor
-          mapped.poNumber || processedData.poNumber, // P.O Number
-          mapped.orderDate || new Date().toLocaleDateString(), // PO Issued Date
-          mapped.prNumber || `PR-${String(index + 1).padStart(3, '0')}`, // P.R Number
-          "", // PR Issued Date (kept blank as requested)
-          "", // PR Prepared by (kept blank as requested)
-          mapped.itemNo, // Item No
-          mapped.description, // Item Description
-          mapped.orderQty, // Order Qty
-          mapped.unit, // Unit
-          mapped.unitPrice, // Unit Price
-          mapped.totalPrice, // Total Price
-          "", // Vendor Acknowledgement (kept blank as requested)
-          "", // Required Delivery Date (kept blank as requested)
-          "", // Vendor Est Delivery Date (kept blank as requested)
-          "", // Actual Receiving Date (kept blank as requested)
-          "" // Status update/Comments (kept blank as requested)
-        ];
-      });
+        
+        // For each header in the template, try to find the corresponding data
+        headers.forEach((header: string, headerIndex: number) => {
+          const headerLower = header.toLowerCase();
+          let value = "";
+          
+          // Debug for first row only
+          if (index === 0 && (header === 'Qty Received' || header === 'Qty Outstanding')) {
+            console.log(`🔍 PROCESSING "${header}" (headerLower: "${headerLower}") for row 1:`);
+            console.log(`  mapped.qtyReceived = "${mapped.qtyReceived}"`);
+            console.log(`  mapped.qtyOutstanding = "${mapped.qtyOutstanding}"`);
+            console.log(`  Will match qty received?`, headerLower.includes('qty received'));
+            console.log(`  Will match qty outstanding?`, headerLower.includes('qty outstanding'));
+          }
+          
+          // Smart mapping based on header names
+          if (headerLower.includes('s/n') || headerLower.includes('serial')) {
+            value = ""; // Keep blank as requested
+          } else if (headerLower.includes('work order')) {
+            value = mapped.workOrderNumber || `WO-${String(index + 1).padStart(3, '0')}`;
+          } else if (headerLower.includes('client') && !headerLower.includes('vendor')) {
+            value = ""; // Keep blank as requested
+          } else if (headerLower === 'vendor') {
+            value = mapped.vendor || "Vendor from ERP";
+          } else if (headerLower.includes('p.o number') || header === 'P.O Number') {
+            value = mapped.poNumber || processedData.poNumber;
+          } else if (headerLower === 'po issued date') {
+            value = mapped.orderDate || new Date().toLocaleDateString();
+          } else if (headerLower === 'p.r number') {
+            value = mapped.prNumber || `PR-${String(index + 1).padStart(3, '0')}`;
+          } else if (headerLower === 'pr issued date' || headerLower === 'pr prepared by') {
+            value = ""; // Keep blank as requested
+          } else if (headerLower.includes('item no') || headerLower.includes('item number')) {
+            value = mapped.itemNo;
+          } else if (headerLower.includes('description') || headerLower.includes('item description')) {
+            value = mapped.description;
+          } else if (headerLower.includes('order qty') || headerLower.includes('order quantity') || (headerLower.includes('qty') && !headerLower.includes('received') && !headerLower.includes('outstanding')) || (headerLower.includes('quantity') && !headerLower.includes('received') && !headerLower.includes('outstanding'))) {
+            value = mapped.orderQty;
+          } else if (headerLower.includes('unit') && !headerLower.includes('price')) {
+            value = mapped.unit;
+          } else if (headerLower.includes('unit price') || headerLower.includes('unit cost')) {
+            value = mapped.unitPrice;
+          } else if (headerLower.includes('total price') || headerLower.includes('extended cost') || headerLower.includes('total cost')) {
+            value = mapped.totalPrice;
+          } else if (headerLower.includes('do number') || headerLower.includes('delivery order')) {
+            value = mapped.doNumber || "";
+          } else if (headerLower.includes('qty received') || headerLower.includes('quantity received')) {
+            console.log(`🚨 ENTERING QTY RECEIVED CONDITION for row ${index}`);
+            value = mapped.qtyReceived || "";
+            console.log(`🚨 ASSIGNED VALUE: "${value}" from mapped.qtyReceived: "${mapped.qtyReceived}"`);
+          } else if (headerLower.includes('qty outstanding') || headerLower.includes('quantity outstanding')) {
+            value = mapped.qtyOutstanding || "";
+            if (index === 0) console.log(`✅ MAPPING - Qty Outstanding: "${mapped.qtyOutstanding}" → "${value}"`);
+          } else if (headerLower === 'vendor acknowledgement' || headerLower === 'required delivery date' || headerLower.includes('vendor est delivery') || headerLower.includes('actual receiving') || headerLower.includes('status update') || headerLower.includes('comment')) {
+            value = ""; // Keep blank as requested
+          }
+          
+          row.push(value || "");
+          
+          if (index === 0 && (header === 'Qty Received' || header === 'Qty Outstanding')) {
+            console.log(`🎯 FINAL PUSH for ${header}: value="${value}", pushed="${value || ""}", row length now: ${row.length}`);
+          }
+        });
+        
+        return row;
+      };
+
+      // Transform the processed data using the smart mapping
+      const enhancedData = processedData.processedData.map(mapDataToTemplate);
+      
+      console.log('FINAL CSV GENERATION DEBUG:');
+      console.log('Template headers:', headers);
+      console.log('Sample enhanced row:', enhancedData[0]);
+      console.log('Expected: Qty Received should be 0, Qty Outstanding should be 2');
 
       // Create CSV content
       const csvContent = [
         headers.join(','),
-        ...enhancedData.map((row: any) => 
-          row.map((cell: any) => `"${cell || ''}"`).join(',')
+        ...enhancedData.map((row: string[]) => 
+          row.map((cell: string) => `"${cell || ''}"`).join(',')
         )
       ].join('\n');
 
@@ -335,6 +384,15 @@ export default function ReportBuilder() {
     const unitCostIndex = headers.findIndex(h => h.toLowerCase().includes('unit cost'));
     const extendedCostIndex = headers.findIndex(h => h.toLowerCase().includes('extended cost'));
     const expectedArrivalIndex = headers.findIndex(h => h.toLowerCase().includes('expected arrival date'));
+    const doNumberIndex = headers.findIndex(h => h.toLowerCase().includes('do number') || h.toLowerCase().includes('delivery order'));
+    const qtyReceivedIndex = headers.findIndex(h => {
+      const cleanHeader = h.toLowerCase().replace('*', '').trim();
+      return cleanHeader === 'quantity received' || cleanHeader.includes('quantity received') || cleanHeader.includes('qty received');
+    });
+    const qtyOutstandingIndex = headers.findIndex(h => {
+      const cleanHeader = h.toLowerCase().replace('*', '').trim();
+      return cleanHeader === 'quantity outstanding' || cleanHeader.includes('quantity outstanding') || cleanHeader.includes('qty outstanding');
+    });
     
     console.log('ERP Headers found:', headers);
     console.log('Column indices found:', {
@@ -349,8 +407,12 @@ export default function ReportBuilder() {
       currencyIndex,
       unitCostIndex,
       extendedCostIndex,
-      expectedArrivalIndex
+      expectedArrivalIndex,
+      doNumberIndex,
+      qtyReceivedIndex,
+      qtyOutstandingIndex
     });
+    
 
     // Process each data row to extract mapped information
     const processedData = dataRows.map((row, index) => {
@@ -421,8 +483,25 @@ export default function ReportBuilder() {
       const unitOfMeasure = unitOfMeasureIndex >= 0 ? cells[unitOfMeasureIndex] : 'PCS'; // Use actual Unit of Measure column
       const currency = currencyIndex >= 0 ? cells[currencyIndex] : 'USD'; // Use actual Currency column
       const unitCost = unitCostIndex >= 0 ? cells[unitCostIndex] : '0.00'; // Use actual Unit Cost column
-      const extendedCost = extendedCostIndex >= 0 ? cells[extendedCostIndex] : '0.00'; // Use actual Extended Cost column
+      let extendedCost = extendedCostIndex >= 0 ? cells[extendedCostIndex] : '0.00'; // Use actual Extended Cost column
+      
+      // If extended cost is 0 or empty, calculate it from unit cost * quantity
+      if (!extendedCost || extendedCost === '0' || extendedCost === '0.00') {
+        const qty = parseFloat(quantityOrdered) || 0;
+        const unitPrice = parseFloat(unitCost) || 0;
+        extendedCost = (qty * unitPrice).toFixed(2);
+      }
       const expectedArrival = expectedArrivalIndex >= 0 ? cells[expectedArrivalIndex] : ''; // Use actual Expected Arrival Date column
+      const doNumber = doNumberIndex >= 0 ? cells[doNumberIndex] : ''; // Use actual DO Number column
+      const qtyReceived = qtyReceivedIndex >= 0 ? cells[qtyReceivedIndex] : ''; // Use actual Qty Received column
+      const qtyOutstanding = qtyOutstandingIndex >= 0 ? cells[qtyOutstandingIndex] : ''; // Use actual Qty Outstanding column
+      
+      if (index === 0) { // Only log first row to debug
+        console.log(`DEBUG ROW 1 EXTRACTION:`);
+        console.log(`  qtyReceivedIndex: ${qtyReceivedIndex}, cells[${qtyReceivedIndex}]: "${qtyReceived}"`);
+        console.log(`  qtyOutstandingIndex: ${qtyOutstandingIndex}, cells[${qtyOutstandingIndex}]: "${qtyOutstanding}"`);
+      }
+      
       
       // Extract and format Order Date (YYYYMMDD to DD/MM/YYYY)
       let formattedOrderDate = '';
@@ -468,6 +547,9 @@ export default function ReportBuilder() {
           unit: unitOfMeasure, // ERP Column 8 → Enhanced Column 13 (Unit)
           unitPrice: unitCost, // ERP Column 10 → Enhanced Column 14 (Unit Price)
           totalPrice: extendedCost, // ERP Column 11 → Enhanced Column 15 (Total Price)
+          doNumber, // DO Number from ERP
+          qtyReceived, // Qty Received from ERP
+          qtyOutstanding, // Qty Outstanding from ERP
           expectedArrival
         }
       };
@@ -510,7 +592,7 @@ export default function ReportBuilder() {
               </Link>
               <div>
                 <h1 className="text-2xl font-bold text-foreground">ERP Report Enhancer</h1>
-                <p className="text-sm text-muted-foreground">Transform ERP reports into your preferred format</p>
+                <p className="text-sm text-muted-foreground">Upload ERP reports and get them instantly formatted in your preferred template</p>
               </div>
             </div>
             <ThemeToggle />
@@ -531,7 +613,7 @@ export default function ReportBuilder() {
             <div className="space-y-6">
               {/* ERP Report Upload */}
                         <div>
-                       <h3 className="text-lg font-medium text-foreground mb-3">1. Upload ERP Report</h3>
+                       <h3 className="text-lg font-medium text-foreground mb-3">Upload ERP Report</h3>
                 <div
                   className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
                     erpFile
@@ -580,65 +662,6 @@ export default function ReportBuilder() {
                           </div>
                         </div>
 
-              {/* Template Upload */}
-                                   <div>
-                       <h3 className="text-lg font-medium text-foreground mb-3">2. Upload Preferred Format Template (Optional)</h3>
-                <div
-                  className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
-                    savedTemplate
-                      ? 'border-green-500 bg-green-500/10'
-                      : 'border-border hover:border-primary'
-                  }`}
-                  onDrop={(e) => handleFileDrop(e, 'template')}
-                  onDragOver={handleDragOver}
-                >
-                  {savedTemplate ? (
-                    <div className="space-y-2">
-                      <FileText className="w-8 h-8 text-green-600 mx-auto" />
-                      <p className="font-medium text-green-900">{savedTemplate.name}</p>
-                      <p className="text-sm text-green-700">Saved on {savedTemplate.savedDate}</p>
-                      <div className="flex space-x-2 justify-center">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setShowTemplateModal(true)}
-                        >
-                          View Template
-                        </Button>
-                        <Button 
-                          variant="outline"
-                          size="sm" 
-                          onClick={() => {
-                            localStorage.removeItem('savedTemplate');
-                            setSavedTemplate(null);
-                          }}
-                        >
-                          Remove Template
-                        </Button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                                               <Upload className="w-8 h-8 text-muted-foreground mx-auto" />
-                         <p className="text-muted-foreground">Drag and drop your preferred format template</p>
-                         <p className="text-sm text-muted-foreground">or</p>
-                      <Button
-                        variant="outline"
-                        onClick={() => templateFileInputRef.current?.click()}
-                      >
-                        Choose Template
-                      </Button>
-                      <input
-                        ref={templateFileInputRef}
-                        type="file"
-                        accept=".csv,.xlsx,.xls"
-                        onChange={handleTemplateUpload}
-                        className="hidden"
-                      />
-                    </div>
-                  )}
-                </div>
-              </div>
 
               {/* Process Button */}
               <div className="pt-4">
