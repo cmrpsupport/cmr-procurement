@@ -310,9 +310,9 @@ export default function DocumentAssistant() {
 
         // Update processing message based on file type
         if (file.type.startsWith("image/")) {
-          setProcessingMessage(`Processing ${file.name} with Tesseract OCR... (${i + 1}/${selectedFiles.length})`);
+          setProcessingMessage(`Processing ${file.name}... (${i + 1}/${selectedFiles.length})`);
         } else if (file.type === "application/pdf") {
-          setProcessingMessage(`Processing ${file.name} with PDF.js + Tesseract OCR... (${i + 1}/${selectedFiles.length})`);
+          setProcessingMessage(`Processing ${file.name}... (${i + 1}/${selectedFiles.length})`);
         } else {
           setProcessingMessage(`Processing ${file.name}... (${i + 1}/${selectedFiles.length})`);
         }
@@ -366,7 +366,7 @@ export default function DocumentAssistant() {
           // Start progress tracking for images
           const startTime = Date.now();
           setProcessingStartTime(startTime);
-          setProcessingStage("Preparing image for OCR...");
+          setProcessingStage("Preparing image for processing...");
           setProcessingProgress(10);
           setTotalPages(1); // Images are single page
           setEstimatedTimeRemaining("Processing...");
@@ -381,7 +381,7 @@ export default function DocumentAssistant() {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
           
-          updateProgress(0.5, 1, "Server processing with Tesseract OCR...", startTime);
+          updateProgress(0.5, 1, "Server processing document...", startTime);
           
           response = await fetch("/api/process-document", {
             method: "POST",
@@ -434,10 +434,10 @@ export default function DocumentAssistant() {
             // Add processing analysis info
             const enhancedDocument = {
               ...document,
-              processingType: file.type.startsWith('image/') ? 'Tesseract OCR Analysis' : 'PDF.js + Tesseract OCR Analysis (Multi-Document)',
+              processingType: file.type.startsWith('image/') ? 'Image Analysis' : 'Document Analysis (Multi-Page)',
               fileAnalysis: `File: ${docResult.originalName} (${(file.size / 1024).toFixed(1)} KB)`,
               templateUsed: `Page ${docResult.extractedData?.rawData?.pageIndex || 1} from Multi-page PDF`,
-              processingMethod: 'PDF.js + Tesseract OCR Processing (Split Document)',
+              processingMethod: 'Multi-Page Document Processing',
               confidence: docResult.extractedData?.confidence ? `${(docResult.extractedData.confidence * 100).toFixed(1)}%` : 'N/A'
             };
             
@@ -464,10 +464,10 @@ export default function DocumentAssistant() {
           // Add processing analysis info
           const enhancedDocument = {
             ...document,
-            processingType: file.type.startsWith('image/') ? 'Tesseract OCR Analysis' : 'PDF.js + Tesseract OCR Analysis',
+            processingType: file.type.startsWith('image/') ? 'Image Analysis' : 'Document Analysis',
             fileAnalysis: `File: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`,
             templateUsed: document.extractedData?.pageCount > 1 ? 'Multi-page Document' : 'Single Page Document',
-            processingMethod: file.type.startsWith('image/') ? 'Tesseract OCR Processing' : 'PDF.js + Tesseract OCR Processing',
+            processingMethod: file.type.startsWith('image/') ? 'Image Processing' : 'Document Processing',
             confidence: document.extractedData?.confidence ? `${(document.extractedData.confidence * 100).toFixed(1)}%` : 'N/A'
           };
           
@@ -966,9 +966,9 @@ export default function DocumentAssistant() {
                         {/* Processing Method Info */}
                         <div className="text-center">
                           <p className="text-xs text-muted-foreground">
-                            {totalPages > 1 ? 'Multi-page PDF • PDF.js + Tesseract OCR' : 
-                             totalPages === 1 && selectedFiles.length > 0 && selectedFiles[currentProcessingIndex - 1]?.type.startsWith('image/') ? 'Image • Tesseract OCR' : 
-                             'Single page • PDF.js + Tesseract OCR'}
+                            {totalPages > 1 ? 'Multi-page document processing' : 
+                             totalPages === 1 && selectedFiles.length > 0 && selectedFiles[currentProcessingIndex - 1]?.type.startsWith('image/') ? 'Image document processing' : 
+                             'Document processing'}
                           </p>
                         </div>
                       </div>
@@ -1017,14 +1017,14 @@ export default function DocumentAssistant() {
                              <h3 className="text-lg font-medium text-foreground mb-2">
                           {isDragging ? 'Drop your documents here' : 'Upload Delivery Orders'}
                         </h3>
-                                                     <p className="text-muted-foreground mb-4">Images: Tesseract OCR • PDFs: PDF.js + Tesseract OCR • Supports multiple JPG, PNG, TIFF, PDF files</p>
+                                                     <p className="text-muted-foreground mb-4">Intelligent document processing • Supports multiple JPG, PNG, TIFF, PDF files</p>
                           <Button onClick={() => fileInputRef.current?.click()}>
                             <Upload className="w-4 h-4 mr-2" />
                           Choose Files
                           </Button>
                                                      <p className="text-xs text-muted-foreground mt-4">
-                          AI OCR will extract: Supplier Name, PO Number, Project Number, Job Number, DO Number, Delivery Date, and Items<br/>
-                          <span className="text-primary font-medium">✓ Google Cloud OCR & Data Extraction • Enterprise-Grade Results!</span>
+                          AI will automatically extract: Supplier Name, PO Number, Project Number, Job Number, DO Number, Delivery Date, and Items<br/>
+                          <span className="text-primary font-medium">✓ Advanced AI Processing • Enterprise-Grade Accuracy!</span>
                         </p>
                       </div>
                     </div>
