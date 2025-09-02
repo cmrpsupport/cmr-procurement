@@ -64,6 +64,7 @@ export default defineConfig(({ mode }) => ({
     outDir: "dist/spa",
   },
   publicDir: "public", // Ensure public directory is copied
+  assetsInclude: ['**/*.png', '**/*.ico', '**/*.svg'], // Explicitly include assets
   plugins: [react(), copyPublicFiles(), expressPlugin()],
   resolve: {
     alias: {
