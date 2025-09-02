@@ -40,6 +40,7 @@ interface BOMItem {
   unitPrice?: number;
   totalPrice?: number;
   rowIndex: number;
+  sheetName?: string;
 }
 
 interface PurchaseRequisition {
@@ -242,64 +243,72 @@ export default function PRGenerator() {
           return null;
         };
         
-        // Try to find a sheet with BOM format (has 'Maker' and 'Model / Part No.' columns)
-        let selectedSheet = workbook.SheetNames[0];
-        let worksheet = workbook.Sheets[selectedSheet];
-        let jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
-        let headerInfo = findHeaderRowInSheet(jsonData);
+        // Find all sheets with BOM format (has 'Maker' and 'Model / Part No.' columns)
+        const validSheets: Array<{
+          sheetName: string;
+          worksheet: any;
+          jsonData: any[][];
+          headerInfo: { headerRow: number, headers: string[] };
+        }> = [];
         
-        // If first sheet doesn't have BOM format, try other sheets
-        if (!headerInfo) {
-          console.log(`Sheet "${selectedSheet}" doesn't have BOM format, trying other sheets...`);
+        // Check all sheets for BOM format
+        for (const sheetName of workbook.SheetNames) {
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+          const headerInfo = findHeaderRowInSheet(jsonData);
           
-          for (const sheetName of workbook.SheetNames.slice(1)) {
-            const testWorksheet = workbook.Sheets[sheetName];
-            const testData = XLSX.utils.sheet_to_json(testWorksheet, { header: 1 }) as any[][];
-            const testHeaderInfo = findHeaderRowInSheet(testData);
-            
-            if (testHeaderInfo) {
-              console.log(`Found BOM format in sheet "${sheetName}"`);
-              selectedSheet = sheetName;
-              worksheet = testWorksheet;
-              jsonData = testData;
-              headerInfo = testHeaderInfo;
-              break;
-            }
+          if (headerInfo) {
+            console.log(`Found BOM format in sheet "${sheetName}"`);
+            validSheets.push({
+              sheetName,
+              worksheet,
+              jsonData,
+              headerInfo
+            });
+          } else {
+            console.log(`Sheet "${sheetName}" doesn't have BOM format, skipping...`);
           }
         }
         
-        if (!headerInfo) {
+        if (validSheets.length === 0) {
           throw new Error(`No BOM format found in any sheet. Looking for headers containing 'Maker' and 'Model/Part No.' columns. Available sheets: ${workbook.SheetNames.join(', ')}`);
         }
         
-        const { headerRow, headers: sheetHeaders } = headerInfo;
-        
-        console.log(`Using sheet: "${selectedSheet}"`);
-        console.log('Sheet headers:', sheetHeaders);
+        console.log(`Processing ${validSheets.length} sheets with BOM data:`, validSheets.map(s => s.sheetName));
 
-      if (jsonData.length < headerRow + 2) {
-        throw new Error("File must contain at least a header row and one data row.");
-      }
+        // Process data with multi-row support
+        const itemsGrouped: { [key: string]: number } = {};
+        const supplierItems: { [key: string]: BOMItem[] } = {};
+        const categoryBreakdown: { [key: string]: { [category: string]: number } } = {};
+        let totalItems = 0;
+        let validItemsCount = 0;
+        let skippedRowsCount = 0;
+        const processedSheets: string[] = [];
 
-      const headers = sheetHeaders;
-      const dataRows = jsonData.slice(headerRow + 1) as any[][];
-        
-        console.log('Combined headers:', headers);
-        console.log('Total data rows to process:', dataRows.length);
-        console.log('First 10 data rows:', dataRows.slice(0, 10));
-        
-        // Debug: Check for empty rows
-        const nonEmptyRows = dataRows.filter(row => row && row.length > 0 && !row.every(cell => !cell || cell.toString().trim() === ''));
-        console.log('Non-empty data rows:', nonEmptyRows.length);
-        console.log('First 10 non-empty rows:', nonEmptyRows.slice(0, 10));
-        
-        // Debug: Check if "Maker" appears in the headers
-        const makerInHeaders = headers.some(h => h && h.toString().toLowerCase().includes('maker'));
-        console.log('Is "Maker" in headers?', makerInHeaders);
-        console.log('All headers:', headers);
+        // Process all valid sheets
+        for (const sheetInfo of validSheets) {
+          const { sheetName, jsonData, headerInfo } = sheetInfo;
+          const { headerRow, headers } = headerInfo;
+          
+          console.log(`\n--- Processing sheet: "${sheetName}" ---`);
+          console.log('Sheet headers:', headers);
 
-      // Find column indices with flexible matching
-      const findColumnIndex = (searchTerms: string[]): number => {
+          if (jsonData.length < headerRow + 2) {
+            console.log(`Skipping sheet "${sheetName}": no data rows found`);
+            continue;
+          }
+
+          const dataRows = jsonData.slice(headerRow + 1) as any[][];
+          
+          console.log('Total data rows to process:', dataRows.length);
+          console.log('First 5 data rows:', dataRows.slice(0, 5));
+          
+          // Debug: Check for empty rows
+          const nonEmptyRows = dataRows.filter(row => row && row.length > 0 && !row.every(cell => !cell || cell.toString().trim() === ''));
+          console.log('Non-empty data rows:', nonEmptyRows.length);
+
+          // Find column indices with flexible matching for this sheet
+          const findColumnIndex = (searchTerms: string[]): number => {
         for (let i = 0; i < headers.length; i++) {
           const header = headers[i];
           // Handle undefined/null values safely
@@ -317,44 +326,40 @@ export default function PRGenerator() {
             }
           }
         }
-        return -1;
-      };
+            return -1;
+          };
 
-      const qtyCol = findColumnIndex(['qty', ' qty', 'quantity', 'amount']);
-      const symbolCol = findColumnIndex(['symbol', 'tag', 'reference']);
-      const descriptionCol = findColumnIndex(['description', 'desc', 'name']);
-      const makerCol = findColumnIndex(['maker', 'supplier', 'vendor', 'manufacturer']);
-      console.log('Maker column detection:', {
-        headers: headers,
-        makerCol: makerCol,
-        foundHeader: makerCol !== -1 ? headers[makerCol] : 'Not found'
-      });
-      const partNumberCol = findColumnIndex(['model / part no.', 'model / part no', 'model/part no', 'part number', 'part no']);
-      const remarksCol = findColumnIndex(['remarks', 'notes', 'comments']);
+          const qtyCol = findColumnIndex(['qty', ' qty', 'quantity', 'amount']);
+          const symbolCol = findColumnIndex(['symbol', 'tag', 'reference']);
+          const descriptionCol = findColumnIndex(['description', 'desc', 'name']);
+          const makerCol = findColumnIndex(['maker', 'supplier', 'vendor', 'manufacturer']);
+          console.log('Maker column detection:', {
+            headers: headers,
+            makerCol: makerCol,
+            foundHeader: makerCol !== -1 ? headers[makerCol] : 'Not found'
+          });
+          const partNumberCol = findColumnIndex(['model / part no.', 'model / part no', 'model/part no', 'part number', 'part no']);
+          const remarksCol = findColumnIndex(['remarks', 'notes', 'comments']);
 
-      console.log('Column indices:', {
-        qty: qtyCol,
-        symbol: symbolCol,
-        description: descriptionCol,
-        maker: makerCol,
-        partNumber: partNumberCol,
-        remarks: remarksCol
-      });
+          console.log('Column indices:', {
+            qty: qtyCol,
+            symbol: symbolCol,
+            description: descriptionCol,
+            maker: makerCol,
+            partNumber: partNumberCol,
+            remarks: remarksCol
+          });
 
-      if (makerCol === -1 || partNumberCol === -1) {
-        throw new Error(`Required columns not found. Need 'Maker' and 'Model / Part No.' columns. Found: ${headers.join(', ')}`);
-      }
+          if (makerCol === -1 || partNumberCol === -1) {
+            console.log(`Sheet "${sheetName}" missing required columns. Need 'Maker' and 'Model / Part No.' columns. Found: ${headers.join(', ')}`);
+            continue;
+          }
 
-      // Process data with multi-row support
-      const itemsGrouped: { [key: string]: number } = {};
-      const supplierItems: { [key: string]: BOMItem[] } = {};
-      const categoryBreakdown: { [key: string]: { [category: string]: number } } = {};
-      let totalItems = 0;
-      let validItemsCount = 0;
-      let skippedRowsCount = 0;
+          // Track this sheet as processed
+          processedSheets.push(sheetName);
 
-      // Process rows in pairs to handle multi-row items
-      for (let i = 0; i < dataRows.length; i++) {
+          // Process rows in pairs to handle multi-row items
+          for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
         
         // Skip empty rows
@@ -406,7 +411,8 @@ export default function PRGenerator() {
             category: inferCategory(description),
             remarks,
             unitPrice: 0, // Default to 0, user will enter manually
-            rowIndex: i + headerRow + 2
+            rowIndex: i + headerRow + 2,
+            sheetName
           };
           item.totalPrice = item.unitPrice! * item.quantity;
           
@@ -423,7 +429,8 @@ export default function PRGenerator() {
             category: inferCategory(description),
             remarks,
             unitPrice: 0, // Default to 0, user will enter manually
-            rowIndex: i + headerRow + 2
+            rowIndex: i + headerRow + 2,
+            sheetName
           };
           item.totalPrice = item.unitPrice! * item.quantity;
           
@@ -440,7 +447,8 @@ export default function PRGenerator() {
             category: inferCategory(description),
             remarks,
             unitPrice: 0, // Default to 0, user will enter manually
-            rowIndex: i + headerRow + 2
+            rowIndex: i + headerRow + 2,
+            sheetName
           };
           item.totalPrice = item.unitPrice! * item.quantity;
           
@@ -454,57 +462,105 @@ export default function PRGenerator() {
           skippedRowsCount++;
           console.log(`Skipping row ${i + headerRow + 2}: missing maker (found: ${maker || 'none'}) or insufficient information`);
         }
-      }
-
-      function addItemToGroups(item: BOMItem) {
-        if (!itemsGrouped[item.supplier]) {
-          itemsGrouped[item.supplier] = 0;
-          supplierItems[item.supplier] = [];
-          categoryBreakdown[item.supplier] = {};
+          }
+          
+          console.log(`Sheet "${sheetName}" processing summary:`, {
+            totalDataRows: dataRows.length,
+            validItemsFromSheet: processedSheets.filter(s => s === sheetName).length,
+            skippedRowsFromSheet: skippedRowsCount
+          });
         }
-        
-        itemsGrouped[item.supplier]++;
-        supplierItems[item.supplier].push(item);
-        
-        const category = item.category || 'Uncategorized';
-        if (!categoryBreakdown[item.supplier][category]) {
-          categoryBreakdown[item.supplier][category] = 0;
+
+        // Helper functions (moved outside sheet loop)
+        function addItemToGroups(item: BOMItem) {
+          if (!itemsGrouped[item.supplier]) {
+            itemsGrouped[item.supplier] = 0;
+            supplierItems[item.supplier] = [];
+            categoryBreakdown[item.supplier] = {};
+          }
+          
+          // Check if item with same supplier and part number already exists
+          const existingItemIndex = supplierItems[item.supplier].findIndex(
+            existingItem => existingItem.partNumber === item.partNumber
+          );
+          
+          if (existingItemIndex !== -1) {
+            // Item exists - combine quantities and merge sheet info
+            const existingItem = supplierItems[item.supplier][existingItemIndex];
+            existingItem.quantity += item.quantity;
+            existingItem.totalPrice = (existingItem.unitPrice || 0) * existingItem.quantity;
+            
+            // Merge sheet names for tracking
+            const existingSheets = existingItem.sheetName ? [existingItem.sheetName] : [];
+            const newSheets = item.sheetName ? [item.sheetName] : [];
+            const combinedSheets = [...new Set([...existingSheets, ...newSheets])];
+            existingItem.sheetName = combinedSheets.join(', ');
+            
+            // Merge symbols if different
+            if (item.symbol && existingItem.symbol !== item.symbol) {
+              const existingSymbols = existingItem.symbol ? existingItem.symbol.split(', ') : [];
+              const newSymbols = item.symbol.split(', ');
+              const combinedSymbols = [...new Set([...existingSymbols, ...newSymbols])];
+              existingItem.symbol = combinedSymbols.join(', ');
+            }
+            
+            // Merge remarks if different
+            if (item.remarks && existingItem.remarks !== item.remarks) {
+              const existingRemarks = existingItem.remarks || '';
+              existingItem.remarks = existingRemarks ? 
+                `${existingRemarks}; ${item.remarks}` : 
+                item.remarks;
+            }
+            
+            console.log(`Combined item: ${item.partNumber} from ${item.sheetName} (new qty: ${existingItem.quantity})`);
+          } else {
+            // New item - add to list
+            itemsGrouped[item.supplier]++;
+            supplierItems[item.supplier].push(item);
+            totalItems++;
+            console.log(`Added new item: ${item.partNumber} from ${item.sheetName} (qty: ${item.quantity})`);
+          }
+          
+          const category = item.category || 'Uncategorized';
+          if (!categoryBreakdown[item.supplier][category]) {
+            categoryBreakdown[item.supplier][category] = 0;
+          }
+          categoryBreakdown[item.supplier][category]++;
         }
-        categoryBreakdown[item.supplier][category]++;
-        
-        totalItems++;
-      }
 
-      function inferCategory(description: string): string {
-        if (!description) return 'General';
-        
-        const desc = description.toLowerCase();
-        if (desc.includes('electrical') || desc.includes('acb') || desc.includes('mccb') || desc.includes('breaker') || desc.includes('led') || desc.includes('relay')) {
-          return 'Electrical';
-        } else if (desc.includes('control') || desc.includes('unit') || desc.includes('trip') || desc.includes('pushbutton')) {
-          return 'Control';
-        } else if (desc.includes('mechanical') || desc.includes('mount') || desc.includes('bracket') || desc.includes('spring')) {
-          return 'Mechanical';
-        } else if (desc.includes('cable') || desc.includes('wire') || desc.includes('conductor')) {
-          return 'Wiring';
-        } else {
-          return 'General';
+        function inferCategory(description: string): string {
+          if (!description) return 'General';
+          
+          const desc = description.toLowerCase();
+          if (desc.includes('electrical') || desc.includes('acb') || desc.includes('mccb') || desc.includes('breaker') || desc.includes('led') || desc.includes('relay')) {
+            return 'Electrical';
+          } else if (desc.includes('control') || desc.includes('unit') || desc.includes('trip') || desc.includes('pushbutton')) {
+            return 'Control';
+          } else if (desc.includes('mechanical') || desc.includes('mount') || desc.includes('bracket') || desc.includes('spring')) {
+            return 'Mechanical';
+          } else if (desc.includes('cable') || desc.includes('wire') || desc.includes('conductor')) {
+            return 'Wiring';
+          } else {
+            return 'General';
+          }
         }
-      }
 
-      console.log('Processing summary:', {
-        totalDataRows: dataRows.length,
-        validItemsCount,
-        skippedRowsCount,
-        totalItems
-      });
+        console.log('Multi-sheet processing summary:', {
+          totalSheetsProcessed: processedSheets.length,
+          processedSheets: processedSheets,
+          validItemsCount,
+          skippedRowsCount,
+          totalItems,
+          totalSuppliersFound: Object.keys(itemsGrouped).length
+        });
 
-      if (totalItems === 0) {
-        throw new Error(`No valid items found in the BOM. 
-        Processed ${dataRows.length} data rows, found ${validItemsCount} valid items, skipped ${skippedRowsCount} rows.
-        Make sure your BOM has data rows with both 'Model / Part No.' and 'Maker' columns filled.
-        Check the browser console for detailed debugging information.`);
-      }
+        if (totalItems === 0) {
+          throw new Error(`No valid items found in any BOM sheets. 
+          Processed ${processedSheets.length} sheets: ${processedSheets.join(', ')}
+          Found ${validItemsCount} valid items, skipped ${skippedRowsCount} rows.
+          Make sure your BOM sheets have data rows with both 'Model / Part No.' and 'Maker' columns filled.
+          Check the browser console for detailed debugging information.`);
+        }
 
       const processingTime = ((Date.now() - startTime) / 1000).toFixed(1);
 
@@ -560,22 +616,16 @@ export default function PRGenerator() {
         status: "success",
         fileName: selectedFile.name,
         fileSize: (selectedFile.size / 1024).toFixed(1) + ' KB',
+        sheetsProcessed: processedSheets,
+        totalSheetsProcessed: processedSheets.length,
+        totalSheetsInFile: workbook.SheetNames.length,
         columnsFound: {
-          partNumber: partNumberCol !== -1 ? `✓ ${headers[partNumberCol]}` : 'Not found',
-          supplier: makerCol !== -1 ? `✓ ${headers[makerCol]}` : 'Not found',
-          description: descriptionCol !== -1 ? `✓ ${headers[descriptionCol]}` : 'Not found',
-          quantity: qtyCol !== -1 ? `✓ ${headers[qtyCol]}` : 'Not found',
-          symbol: symbolCol !== -1 ? `✓ ${headers[symbolCol]}` : 'Not found',
-          remarks: remarksCol !== -1 ? `✓ ${headers[remarksCol]}` : 'Not found'
-        },
-        // Also store the raw column indices for debugging
-        columnIndices: {
-          partNumber: partNumberCol,
-          supplier: makerCol,
-          description: descriptionCol,
-          quantity: qtyCol,
-          symbol: symbolCol,
-          remarks: remarksCol
+          partNumber: '✓ Found in processed sheets',
+          supplier: '✓ Found in processed sheets', 
+          description: '✓ Found in processed sheets',
+          quantity: '✓ Found in processed sheets',
+          symbol: '✓ Found in processed sheets',
+          remarks: '✓ Found in processed sheets'
         }
       };
 
@@ -1030,7 +1080,7 @@ export default function PRGenerator() {
                 </CardHeader>
                 <CardContent>
                   {/* File Processing Stats */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
                       <div className="text-center p-3 bg-card rounded-lg border">
                         <div className="text-2xl font-bold text-foreground">{processedData.totalItems}</div>
                         <div className="text-sm text-muted-foreground">Total Items</div>
@@ -1044,10 +1094,33 @@ export default function PRGenerator() {
                         <div className="text-sm text-muted-foreground">PRs to Generate</div>
                     </div>
                       <div className="text-center p-3 bg-card rounded-lg border">
+                        <div className="text-2xl font-bold text-foreground">{processedData.totalSheetsProcessed}</div>
+                        <div className="text-sm text-muted-foreground">Sheets Processed</div>
+                    </div>
+                      <div className="text-center p-3 bg-card rounded-lg border">
                         <div className="text-2xl font-bold text-foreground">{processedData.processingTime}</div>
                         <div className="text-sm text-muted-foreground">Processing Time</div>
                     </div>
                   </div>
+
+                  {/* Processed Sheets Info */}
+                  {processedData.sheetsProcessed && processedData.sheetsProcessed.length > 0 && (
+                    <div className="mb-6 p-4 bg-card rounded-lg border">
+                      <h4 className="font-medium text-foreground mb-3">Processed Sheets ({processedData.totalSheetsProcessed} of {processedData.totalSheetsInFile}):</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {processedData.sheetsProcessed.map((sheetName, index) => (
+                          <Badge key={index} variant="secondary" className="text-xs">
+                            📄 {sheetName}
+                          </Badge>
+                        ))}
+                      </div>
+                      {processedData.totalSheetsInFile > processedData.totalSheetsProcessed && (
+                        <p className="text-xs text-muted-foreground mt-2">
+                          {processedData.totalSheetsInFile - processedData.totalSheetsProcessed} sheet(s) were skipped (no BOM format detected)
+                        </p>
+                      )}
+                    </div>
+                  )}
 
                   {/* Column Mapping Info */}
                   <div className="mb-6 p-4 bg-card rounded-lg border">
@@ -1079,7 +1152,7 @@ export default function PRGenerator() {
                       </div>
                     </div>
                     <div className="mt-3 p-2 bg-transparent border border-green-500/30 rounded text-sm text-foreground">
-                      ✅ All required columns detected successfully. Your "Maker or supplier" column is being used as the supplier source.
+                      ✅ All required columns detected successfully across {processedData.totalSheetsProcessed} sheet(s). BOM data combined from multiple sheets.
                     </div>
                   </div>
 

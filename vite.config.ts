@@ -54,11 +54,11 @@ function copyPublicFiles(): Plugin {
 export default defineConfig(({ mode }) => ({
   server: {
     host: "::",
-    port: 8080,
+    port: 8082,
     fs: {
       allow: ["./client", "./shared"],
       deny: [".env", ".env.*", "*.{crt,pem}", "**/.git/**", "server/**"],
-    },
+    }
   },
   build: {
     outDir: "dist/spa",
@@ -73,15 +73,28 @@ export default defineConfig(({ mode }) => ({
 }));
 
 function expressPlugin(): Plugin {
+  let expressApp: any;
+  
   return {
     name: "express-plugin",
     apply: "serve", // Only apply during development (serve mode)
-    configureServer(server) {
-      // Dynamic import to avoid issues during build
-      import("./server").then(({ createServer }) => {
-        const app = createServer();
-        server.middlewares.use(app);
-      });
+    async configureServer(server) {
+      try {
+        const { createServer } = await import("./server");
+        expressApp = createServer();
+        
+        // Use the Express app for all API routes, inserted at the beginning
+        server.middlewares.use((req, res, next) => {
+          if (req.url && req.url.startsWith('/api')) {
+            expressApp(req, res, next);
+          } else {
+            next();
+          }
+        });
+        console.log('Express app integrated with Vite server');
+      } catch (error) {
+        console.error('Failed to integrate Express app:', error);
+      }
     },
   };
 }

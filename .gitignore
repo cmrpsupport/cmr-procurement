@@ -117,6 +117,12 @@ temp/
 uploads/
 temp-uploads/
 
+# Google Cloud Service Account & Secrets
+server/config/google-service-account.json
+server/config/*.json
+*.key
+*.pem
+
 # Build artifacts
 .builder/
 .claude/
