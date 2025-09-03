@@ -358,7 +358,7 @@ export default function PRGenerator() {
           // Track this sheet as processed
           processedSheets.push(sheetName);
 
-          // Process rows in pairs to handle multi-row items
+          // Process rows with multi-line description support
           for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
         
@@ -370,8 +370,10 @@ export default function PRGenerator() {
 
         const qty = qtyCol !== -1 ? parseFloat(row[qtyCol]) || 1 : 1;
         const symbol = symbolCol !== -1 ? row[symbolCol]?.toString().trim() : '';
-        const description = descriptionCol !== -1 ? row[descriptionCol]?.toString().trim() : '';
+        let description = descriptionCol !== -1 ? row[descriptionCol]?.toString().trim() : '';
         const maker = makerCol !== -1 ? row[makerCol]?.toString().trim() : '';
+        const partNumber = partNumberCol !== -1 ? row[partNumberCol]?.toString().trim() : '';
+        let remarks = remarksCol !== -1 ? row[remarksCol]?.toString().trim() : '';
         
         // Skip rows where the maker value is actually a header name
         if (maker && headers.some(header => header && header.toString().toLowerCase().includes(maker.toLowerCase()))) {
@@ -389,61 +391,87 @@ export default function PRGenerator() {
             headers: headers
           });
         }
-        const partNumber = partNumberCol !== -1 ? row[partNumberCol]?.toString().trim() : '';
-        const remarks = remarksCol !== -1 ? row[remarksCol]?.toString().trim() : '';
 
         console.log(`Row ${i + headerRow + 2}:`, { qty, symbol, description, maker, partNumber });
 
-        // Check if this is a main item (has symbol and main description)
-        const isMainItem = symbol && description && !description.toLowerCase().startsWith('c/w');
+        // Check if this is a main item (has both maker and part number)
+        const isMainItem = maker && partNumber;
         
-        // Check if this is a sub-component (no symbol, description starts with 'c/w')
-        const isSubComponent = !symbol && description && description.toLowerCase().startsWith('c/w');
-
-        if (isMainItem && maker && partNumber) {
-          // Main item with both maker and part number
-          const item: BOMItem = {
-            partNumber,
-            supplier: maker,
-            description,
-            quantity: qty,
-            symbol,
-            category: inferCategory(description),
-            remarks,
-            unitPrice: 0, // Default to 0, user will enter manually
-            rowIndex: i + headerRow + 2,
-            sheetName
-          };
-          item.totalPrice = item.unitPrice! * item.quantity;
+        console.log(`Main item check for row ${i + headerRow + 2}:`, {
+          maker: `"${maker}"`,
+          partNumber: `"${partNumber}"`,
+          isMainItem: isMainItem,
+          makerExists: !!maker,
+          partNumberExists: !!partNumber
+        });
+        
+        if (isMainItem) {
+          console.log(`✓ Processing as main item: ${partNumber} by ${maker}`);
+          console.log(`Looking for continuation rows starting from row ${i + 1 + headerRow + 2}...`);
           
-          addItemToGroups(item);
-          validItemsCount++;
-        } else if (isSubComponent && maker && partNumber) {
-          // Sub-component with its own maker and part number
-          const item: BOMItem = {
-            partNumber,
-            supplier: maker,
-            description,
-            quantity: qty,
-            symbol: '',
-            category: inferCategory(description),
-            remarks,
-            unitPrice: 0, // Default to 0, user will enter manually
-            rowIndex: i + headerRow + 2,
-            sheetName
-          };
-          item.totalPrice = item.unitPrice! * item.quantity;
+          // This is a main item, check for continuation rows (multi-line descriptions)
+          const continuationDescriptions: string[] = [];
+          let nextRowIndex = i + 1;
           
-          addItemToGroups(item);
-          validItemsCount++;
-        } else if (maker && partNumber) {
-          // Standalone item with both maker and part number
+          // Look ahead for continuation rows
+          while (nextRowIndex < dataRows.length) {
+            const nextRow = dataRows[nextRowIndex];
+            
+            // Skip completely empty rows
+            if (!nextRow || nextRow.length === 0 || nextRow.every(cell => !cell || cell.toString().trim() === '')) {
+              break;
+            }
+            
+            const nextMaker = makerCol !== -1 ? nextRow[makerCol]?.toString().trim() : '';
+            const nextPartNumber = partNumberCol !== -1 ? nextRow[partNumberCol]?.toString().trim() : '';
+            const nextDescription = descriptionCol !== -1 ? nextRow[descriptionCol]?.toString().trim() : '';
+            
+            console.log(`Checking potential continuation row ${nextRowIndex + headerRow + 2}:`, {
+              nextMaker: `"${nextMaker}"`,
+              nextPartNumber: `"${nextPartNumber}"`,
+              nextDescription: `"${nextDescription}"`,
+              makerEmpty: !nextMaker,
+              partNumberEmpty: !nextPartNumber,
+              hasDescription: !!nextDescription
+            });
+            
+            // Check if this is a continuation row (empty or whitespace-only maker and part number but has description)
+            const isContinuationRow = (!nextMaker || nextMaker === '') && 
+                                    (!nextPartNumber || nextPartNumber === '') && 
+                                    nextDescription && nextDescription !== '';
+            
+            if (isContinuationRow) {
+              console.log(`✓ Found continuation row ${nextRowIndex + headerRow + 2}: "${nextDescription}"`);
+              continuationDescriptions.push(nextDescription);
+              nextRowIndex++;
+            } else {
+              console.log(`✗ Not a continuation row ${nextRowIndex + headerRow + 2}: has maker="${nextMaker}" or partNumber="${nextPartNumber}"`);
+              // Hit a new main item or empty row, stop looking
+              break;
+            }
+          }
+          
+          // Merge descriptions if we found continuation rows
+          if (continuationDescriptions.length > 0) {
+            const fullDescription = [description, ...continuationDescriptions].join('\n');
+            description = fullDescription;
+            console.log(`✓ Merged multi-line description for ${partNumber}:`, {
+              originalDescription: `"${description.split('\n')[0]}"`,
+              continuationLines: continuationDescriptions,
+              finalDescription: `"${description}"`,
+              totalLines: description.split('\n').length
+            });
+          } else {
+            console.log(`No continuation rows found for ${partNumber}, keeping single-line description: "${description}"`);
+          }
+          
+          // Now create the BOM item with the potentially merged description
           const item: BOMItem = {
             partNumber,
             supplier: maker,
             description: description || 'No description',
             quantity: qty,
-            symbol,
+            symbol: symbol || '',
             category: inferCategory(description),
             remarks,
             unitPrice: 0, // Default to 0, user will enter manually
@@ -454,13 +482,17 @@ export default function PRGenerator() {
           
           addItemToGroups(item);
           validItemsCount++;
+          
+          // Skip the continuation rows we already processed
+          i = nextRowIndex - 1; // -1 because the for loop will increment
+          console.log(`Processed main item and skipping to row ${nextRowIndex + headerRow + 2}`);
         } else if (maker && !partNumber && description) {
           // Skip items with maker but no part number - they need manual review
           skippedRowsCount++;
-          console.log(`Skipping row ${i + headerRow + 2}: has maker (${maker}) and description but no part number - needs manual review`);
+          console.log(`⚠️ Skipping row ${i + headerRow + 2}: has maker (${maker}) and description but no part number - needs manual review`);
         } else {
           skippedRowsCount++;
-          console.log(`Skipping row ${i + headerRow + 2}: missing maker (found: ${maker || 'none'}) or insufficient information`);
+          console.log(`⚠️ Skipping row ${i + headerRow + 2}: missing maker (found: ${maker || 'none'}) or part number (found: ${partNumber || 'none'}) - insufficient information`);
         }
           }
           
