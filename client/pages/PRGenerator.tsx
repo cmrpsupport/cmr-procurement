@@ -20,12 +20,14 @@ import {
   Edit,
   Download,
   Eye,
-  Save
+  Save,
+  FileDown
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { useState, useRef, useEffect } from "react";
 import * as XLSX from 'xlsx';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
 interface BOMItem {
   partNumber: string;
@@ -33,7 +35,6 @@ interface BOMItem {
   quantity: number;
   supplier: string;
   symbol?: string;
-  category?: string;
   drawingNumber?: string;
   requestedDate?: string;
   remarks?: string;
@@ -93,6 +94,7 @@ export default function PRGenerator() {
   const [showPRDialog, setShowPRDialog] = useState(false);
   const [editingPR, setEditingPR] = useState<PurchaseRequisition | null>(null);
   const [downloadingPR, setDownloadingPR] = useState<string | null>(null);
+  const [downloadingPRPDF, setDownloadingPRPDF] = useState<string | null>(null);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -279,7 +281,6 @@ export default function PRGenerator() {
         // Process data with multi-row support
         const itemsGrouped: { [key: string]: number } = {};
         const supplierItems: { [key: string]: BOMItem[] } = {};
-        const categoryBreakdown: { [key: string]: { [category: string]: number } } = {};
         let totalItems = 0;
         let validItemsCount = 0;
         let skippedRowsCount = 0;
@@ -472,7 +473,6 @@ export default function PRGenerator() {
             description: description || 'No description',
             quantity: qty,
             symbol: symbol || '',
-            category: inferCategory(description),
             remarks,
             unitPrice: 0, // Default to 0, user will enter manually
             rowIndex: i + headerRow + 2,
@@ -508,7 +508,6 @@ export default function PRGenerator() {
           if (!itemsGrouped[item.supplier]) {
             itemsGrouped[item.supplier] = 0;
             supplierItems[item.supplier] = [];
-            categoryBreakdown[item.supplier] = {};
           }
           
           // Check if item with same supplier and part number already exists
@@ -553,29 +552,9 @@ export default function PRGenerator() {
             console.log(`Added new item: ${item.partNumber} from ${item.sheetName} (qty: ${item.quantity})`);
           }
           
-          const category = item.category || 'Uncategorized';
-          if (!categoryBreakdown[item.supplier][category]) {
-            categoryBreakdown[item.supplier][category] = 0;
-          }
-          categoryBreakdown[item.supplier][category]++;
+          // Category tracking removed
         }
 
-        function inferCategory(description: string): string {
-          if (!description) return 'General';
-          
-          const desc = description.toLowerCase();
-          if (desc.includes('electrical') || desc.includes('acb') || desc.includes('mccb') || desc.includes('breaker') || desc.includes('led') || desc.includes('relay')) {
-            return 'Electrical';
-          } else if (desc.includes('control') || desc.includes('unit') || desc.includes('trip') || desc.includes('pushbutton')) {
-            return 'Control';
-          } else if (desc.includes('mechanical') || desc.includes('mount') || desc.includes('bracket') || desc.includes('spring')) {
-            return 'Mechanical';
-          } else if (desc.includes('cable') || desc.includes('wire') || desc.includes('conductor')) {
-            return 'Wiring';
-          } else {
-            return 'General';
-          }
-        }
 
         console.log('Multi-sheet processing summary:', {
           totalSheetsProcessed: processedSheets.length,
@@ -643,7 +622,6 @@ export default function PRGenerator() {
         suppliersFound: Object.keys(itemsGrouped).length,
         itemsGrouped,
         supplierItems,
-        categoryBreakdown,
         processingTime: `${processingTime} seconds`,
         status: "success",
         fileName: selectedFile.name,
@@ -741,6 +719,15 @@ export default function PRGenerator() {
   const savePR = async () => {
     if (!editingPR) return;
 
+    // Validate required fields
+    if (!editingPR.prNumber.trim()) {
+      setUploadError('PR Number is required');
+      return;
+    }
+
+    // Clear any previous errors
+    setUploadError('');
+
     try {
       // Try to save to API first
     try {
@@ -750,9 +737,10 @@ export default function PRGenerator() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
+          prNumber: editingPR.prNumber,
           supplier: editingPR.supplier,
-          totalItems: editingPR.totalItems,
-          totalValue: editingPR.totalValue,
+          totalItems: editingPR.items.length,
+          totalValue: editingPR.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0),
           status: editingPR.status,
           items: editingPR.items
         })
@@ -804,6 +792,7 @@ export default function PRGenerator() {
     setEditingPR({
       ...editingPR,
       items: updatedItems,
+      totalItems: updatedItems.length,
       totalValue: updatedItems.reduce((sum, item) => sum + (item.totalPrice || 0), 0)
     });
   };
@@ -845,6 +834,253 @@ export default function PRGenerator() {
     XLSX.writeFile(wb, 'BOM_Template.xlsx');
   };
 
+  const downloadPRPDF = async (pr: PurchaseRequisition) => {
+    console.log('Downloading PR as PDF:', pr);
+    setDownloadingPRPDF(pr.id);
+    
+    try {
+      // Read the existing PDF template
+      const templatePath = '/PR Export Template.pdf';
+      const existingPdfBytes = await fetch(templatePath).then(res => {
+        if (!res.ok) {
+          throw new Error('Could not load PDF template');
+        }
+        return res.arrayBuffer();
+      });
+      
+      // Load the existing PDF
+      const pdfDoc = await PDFDocument.load(existingPdfBytes);
+      const pages = pdfDoc.getPages();
+      const firstPage = pages[0];
+      
+      // Get standard font
+      const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+      const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      
+      // Fill in the header fields based on template coordinates
+      
+      // VENDOR field - positioned in the large left box
+      firstPage.drawText(pr.supplier, {
+        x: 120,
+        y: 565,
+        size: 11,
+        font: font,
+        color: rgb(0, 0, 0),
+      });
+      
+      // PR Date - in the PR Date box
+      firstPage.drawText(new Date().toLocaleDateString('en-GB'), {
+        x: 535,
+        y: 580,
+        size: 9,
+        font: font,
+        color: rgb(0, 0, 0),
+      });
+      
+      // P.R. NO - in the P.R. NO box
+      firstPage.drawText(pr.prNumber, {
+        x: 630,
+        y: 580,
+        size: 9,
+        font: font,
+        color: rgb(0, 0, 0),
+      });
+      
+      // Process items in chunks of 15 per page
+      const itemsPerPage = 15;
+      const itemChunks = [];
+      for (let i = 0; i < pr.items.length; i += itemsPerPage) {
+        itemChunks.push(pr.items.slice(i, i + itemsPerPage));
+      }
+      
+      // Process each page of items
+      for (let pageIndex = 0; pageIndex < itemChunks.length; pageIndex++) {
+        const items = itemChunks[pageIndex];
+        let currentPage;
+        
+        if (pageIndex === 0) {
+          currentPage = firstPage;
+        } else {
+          // Create new page by copying the template
+          const newPageBytes = await fetch('/PR Export Template.pdf').then(res => res.arrayBuffer());
+          const templateDoc = await PDFDocument.load(newPageBytes);
+          const [templatePage] = await pdfDoc.copyPages(templateDoc, [0]);
+          currentPage = pdfDoc.addPage(templatePage);
+          
+          // Update header info on new page
+          currentPage.drawText(pr.supplier, {
+            x: 120,
+            y: 565,
+            size: 11,
+            font: font,
+            color: rgb(0, 0, 0),
+          });
+          
+          currentPage.drawText(new Date().toLocaleDateString('en-GB'), {
+            x: 535,
+            y: 580,
+            size: 9,
+            font: font,
+            color: rgb(0, 0, 0),
+          });
+          
+          currentPage.drawText(pr.prNumber, {
+            x: 630,
+            y: 580,
+            size: 9,
+            font: font,
+            color: rgb(0, 0, 0),
+          });
+        }
+        
+        // Table starting Y position (based on actual template)
+        const tableStartY = 495;
+        const rowHeight = 11;
+        
+        // Column X positions based on actual template layout from screenshot
+        const columns = {
+          item: 33,         // Item column (centered in first narrow column)
+          drawingNo: 85,    // Drawing No.
+          rev: 125,         // Rev  
+          description: 160, // Description
+          maker: 370,       // Maker (move left)
+          modelPart: 470,   // Model/Part No.
+          sub: 560,         // Sub (Qty)
+          total: 595,       // Total (Qty) - move left slightly
+          unitPrice: 650,   // Unit Price
+          dateReq: 720,     // Date Required
+          remarks: 800      // Remarks
+        };
+        
+        // Draw items for this page
+        items.forEach((item, index) => {
+          const globalIndex = pageIndex * itemsPerPage + index;
+          const yPos = tableStartY - (index * rowHeight);
+          
+          // Item number (centered in first column)
+          currentPage.drawText((globalIndex + 1).toString(), {
+            x: columns.item,
+            y: yPos,
+            size: 8,
+            font: font,
+            color: rgb(0, 0, 0),
+          });
+          
+          // Description (truncate if too long)
+          let description = item.description;
+          if (description.length > 30) {
+            description = description.substring(0, 27) + '...';
+          }
+          currentPage.drawText(description, {
+            x: columns.description,
+            y: yPos,
+            size: 7,
+            font: font,
+            color: rgb(0, 0, 0),
+          });
+          
+          // Maker (supplier)
+          let maker = item.supplier;
+          if (maker.length > 12) {
+            maker = maker.substring(0, 9) + '...';
+          }
+          currentPage.drawText(maker, {
+            x: columns.maker,
+            y: yPos,
+            size: 7,
+            font: font,
+            color: rgb(0, 0, 0),
+          });
+          
+          // Model / Part No.
+          let partNo = item.partNumber;
+          if (partNo.length > 18) {
+            partNo = partNo.substring(0, 15) + '...';
+          }
+          currentPage.drawText(partNo, {
+            x: columns.modelPart,
+            y: yPos,
+            size: 7,
+            font: font,
+            color: rgb(0, 0, 0),
+          });
+          
+          // Quantity in Total column (show as integer)
+          currentPage.drawText(item.quantity.toString(), {
+            x: columns.total,
+            y: yPos,
+            size: 8,
+            font: font,
+            color: rgb(0, 0, 0),
+          });
+          
+          // Unit Price (numeric only for Excel compatibility)
+          const unitPrice = `${(item.unitPrice || 0).toFixed(2)}`;
+          currentPage.drawText(unitPrice, {
+            x: columns.unitPrice,
+            y: yPos,
+            size: 7,
+            font: font,
+            color: rgb(0, 0, 0),
+          });
+          
+          // Remarks (if any)
+          if (item.remarks) {
+            let remarks = item.remarks;
+            if (remarks.length > 10) {
+              remarks = remarks.substring(0, 7) + '...';
+            }
+            currentPage.drawText(remarks, {
+              x: columns.remarks,
+              y: yPos,
+              size: 6,
+              font: font,
+              color: rgb(0, 0, 0),
+            });
+          }
+        });
+      }
+      
+      // Add total on the last page
+      const lastPageIndex = itemChunks.length - 1;
+      const lastPage = pages[pages.length - 1];
+      const lastChunkLength = itemChunks[lastPageIndex].length;
+      
+      // Position total row below last item
+      const totalY = 495 - (lastChunkLength * 11) - 15;
+      
+      // Draw only the total amount (the template already has "Total:" text)
+      lastPage.drawText(`${pr.totalValue.toLocaleString()}`, {
+        x: 650,
+        y: totalY,
+        size: 9,
+        font: boldFont,
+        color: rgb(0, 0, 0),
+      });
+      
+      // Serialize the PDF
+      const pdfBytes = await pdfDoc.save();
+      
+      // Create download
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${pr.prNumber}_${pr.supplier.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
+      link.click();
+      
+      // Clean up
+      URL.revokeObjectURL(url);
+      
+      console.log('PDF download completed successfully');
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+      alert('Error generating PDF. Please try again.');
+    } finally {
+      setDownloadingPRPDF(null);
+    }
+  };
+
   const downloadPR = (pr: PurchaseRequisition) => {
     console.log('Downloading PR:', pr);
     setDownloadingPR(pr.id);
@@ -860,11 +1096,11 @@ export default function PRGenerator() {
       ['Date Created:', pr.createdAt],
       ['Status:', pr.status],
       ['Total Items:', pr.totalItems],
-      ['Total Value:', `₱${pr.totalValue.toLocaleString()}`],
+      ['Total Value:', `SGD ${pr.totalValue.toLocaleString()}`],
       [],
       
       // Items table header
-      ['Item #', 'Symbol', 'Part Number', 'Description', 'Quantity', 'Category', 'Unit Price', 'Total Price', 'Remarks'],
+      ['Item #', 'Symbol', 'Part Number', 'Description', 'Quantity', 'Unit Price', 'Total Price', 'Remarks'],
       
       // Items data
       ...pr.items.map((item, index) => [
@@ -873,15 +1109,14 @@ export default function PRGenerator() {
         item.partNumber,
         item.description,
         item.quantity,
-        item.category || '',
-        `₱${(item.unitPrice || 0).toLocaleString()}`,
-        `₱${(item.totalPrice || 0).toLocaleString()}`,
+        `SGD ${(item.unitPrice || 0).toLocaleString()}`,
+        `SGD ${(item.totalPrice || 0).toLocaleString()}`,
         item.remarks || ''
       ]),
       
       // Summary
       [],
-      ['', '', '', '', '', '', 'TOTAL:', `₱${pr.totalValue.toLocaleString()}`, '']
+      ['', '', '', '', '', 'TOTAL:', `₱${pr.totalValue.toLocaleString()}`, '']
     ];
 
     // Create workbook and worksheet
@@ -895,7 +1130,6 @@ export default function PRGenerator() {
       { wch: 20 }, // Part Number
       { wch: 40 }, // Description
       { wch: 10 }, // Quantity
-      { wch: 15 }, // Category
       { wch: 15 }, // Unit Price
       { wch: 15 }, // Total Price
       { wch: 20 }  // Remarks
@@ -1200,15 +1434,6 @@ export default function PRGenerator() {
                             <span className="font-medium">{supplier}</span>
                             <Badge variant="secondary">{count as number} items</Badge>
                           </div>
-                          {processedData.categoryBreakdown[supplier] && (
-                            <div className="text-xs text-muted-foreground flex flex-wrap gap-1">
-                              {Object.entries(processedData.categoryBreakdown[supplier]).map(([cat, catCount]) => (
-                                <Badge key={cat} variant="outline" className="text-xs">
-                                  {cat}: {catCount as number}
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
                         </div>
                       ))}
                     </div>
@@ -1294,8 +1519,10 @@ export default function PRGenerator() {
                             </Button>
                             <Button 
                               size="sm" 
+                              variant="outline"
                               onClick={() => downloadPR(pr)}
                               disabled={downloadingPR === pr.id}
+                              title="Download as Excel"
                             >
                               {downloadingPR === pr.id ? (
                                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -1303,10 +1530,22 @@ export default function PRGenerator() {
                                 <Download className="w-4 h-4" />
                               )}
                             </Button>
+                            <Button 
+                              size="sm" 
+                              onClick={() => downloadPRPDF(pr)}
+                              disabled={downloadingPRPDF === pr.id}
+                              title="Download as PDF"
+                            >
+                              {downloadingPRPDF === pr.id ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <FileDown className="w-4 h-4" />
+                              )}
+                            </Button>
                           </div>
                         </div>
                         <div className="text-sm text-gray-600">
-                          Total Value: ₱{pr.totalValue.toLocaleString()}
+                          Total Value: SGD {pr.totalValue.toLocaleString()}
                         </div>
                       </div>
                     ))}
@@ -1354,7 +1593,7 @@ export default function PRGenerator() {
                     </div>
                     <div className="text-center p-3 bg-card rounded-lg border">
                       <div className="text-2xl font-bold text-foreground">
-                        ₱{purchaseRequisitions.reduce((sum, pr) => sum + pr.totalValue, 0).toLocaleString()}
+                        SGD {purchaseRequisitions.reduce((sum, pr) => sum + pr.totalValue, 0).toLocaleString()}
                       </div>
                       <div className="text-sm text-muted-foreground">Total Value</div>
                     </div>
@@ -1381,7 +1620,7 @@ export default function PRGenerator() {
                             </Badge>
                           </div>
                           <div className="text-sm text-muted-foreground">
-                            {pr.totalItems} items • ₱{pr.totalValue.toLocaleString()}
+                            {pr.totalItems} items • SGD {pr.totalValue.toLocaleString()}
                           </div>
                         </div>
                       ))}
@@ -1421,12 +1660,22 @@ export default function PRGenerator() {
                       <Button 
                         variant="outline"
                         onClick={() => {
-                          // Download all PRs as a single file or zip
+                          // Download all PRs as Excel files
                           purchaseRequisitions.forEach(pr => downloadPR(pr));
                         }}
                       >
                         <Download className="w-4 h-4 mr-2" />
-                        Download All PRs
+                        Download All (Excel)
+                      </Button>
+                      <Button 
+                        variant="outline"
+                        onClick={() => {
+                          // Download all PRs as PDF files
+                          purchaseRequisitions.forEach(pr => downloadPRPDF(pr));
+                        }}
+                      >
+                        <FileDown className="w-4 h-4 mr-2" />
+                        Download All (PDF)
                       </Button>
                     </div>
                     
@@ -1538,19 +1787,27 @@ export default function PRGenerator() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="text-sm font-medium text-foreground">PR Number</label>
-                  <p className="text-sm text-foreground mt-1">{(editingPR || selectedPR)!.prNumber}</p>
+                  {editingPR ? (
+                    <Input
+                      value={editingPR.prNumber}
+                      onChange={(e) => setEditingPR({ ...editingPR, prNumber: e.target.value })}
+                      className="mt-1"
+                    />
+                  ) : (
+                    <p className="text-sm text-foreground mt-1">{selectedPR!.prNumber}</p>
+                  )}
                 </div>
                 <div>
                   <label className="text-sm font-medium text-foreground">Supplier</label>
                   <p className="text-sm text-foreground mt-1">{(editingPR || selectedPR)!.supplier}</p>
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-gray-700">Total Items</label>
-                  <p className="text-sm text-gray-900 mt-1">{(editingPR || selectedPR)!.totalItems}</p>
+                  <label className="text-sm font-medium text-foreground">Total Items</label>
+                  <p className="text-sm text-foreground mt-1">{(editingPR || selectedPR)!.items.length}</p>
                 </div>
                 <div>
-                  <label className="text-sm font-medium text-gray-700">Total Value</label>
-                  <p className="text-sm text-gray-900 mt-1">₱{(editingPR || selectedPR)!.totalValue.toLocaleString()}</p>
+                  <label className="text-sm font-medium text-foreground">Total Value</label>
+                  <p className="text-sm text-foreground mt-1">₱{(editingPR || selectedPR)!.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0).toLocaleString()}</p>
                 </div>
               </div>
 
@@ -1563,7 +1820,6 @@ export default function PRGenerator() {
                       <TableHead>Part Number</TableHead>
                       <TableHead>Description</TableHead>
                       <TableHead>Quantity</TableHead>
-                      <TableHead>Category</TableHead>
                       <TableHead>Unit Price</TableHead>
                       <TableHead>Total Price</TableHead>
                       <TableHead>Remarks</TableHead>
@@ -1610,17 +1866,6 @@ export default function PRGenerator() {
                         <TableCell>
                           {editingPR ? (
                             <Input
-                              value={item.category || ''}
-                              onChange={(e) => updateItem(index, 'category', e.target.value)}
-                              className="w-32"
-                            />
-                          ) : (
-                            item.category || '-'
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          {editingPR ? (
-                            <Input
                               type="number"
                               value={item.unitPrice}
                               onChange={(e) => updateItem(index, 'unitPrice', parseFloat(e.target.value) || 0)}
@@ -1630,7 +1875,7 @@ export default function PRGenerator() {
                             `₱${item.unitPrice?.toLocaleString()}`
                           )}
                         </TableCell>
-                        <TableCell>₱{item.totalPrice?.toLocaleString()}</TableCell>
+                        <TableCell>SGD {item.totalPrice?.toLocaleString()}</TableCell>
                         <TableCell>
                           {editingPR ? (
                             <Input
@@ -1662,18 +1907,35 @@ export default function PRGenerator() {
                   </Button>
                 )}
                 <Button 
+                  variant="outline"
                   onClick={() => downloadPR(editingPR || selectedPR!)}
                   disabled={downloadingPR === (editingPR || selectedPR!)?.id}
                 >
                   {downloadingPR === (editingPR || selectedPR!)?.id ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Downloading...
+                      Downloading Excel...
                     </>
                   ) : (
                     <>
                       <Download className="w-4 h-4 mr-2" />
-                      Download PR
+                      Download Excel
+                    </>
+                  )}
+                </Button>
+                <Button 
+                  onClick={() => downloadPRPDF(editingPR || selectedPR!)}
+                  disabled={downloadingPRPDF === (editingPR || selectedPR!)?.id}
+                >
+                  {downloadingPRPDF === (editingPR || selectedPR!)?.id ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Generating PDF...
+                    </>
+                  ) : (
+                    <>
+                      <FileDown className="w-4 h-4 mr-2" />
+                      Download PDF
                     </>
                   )}
                 </Button>
