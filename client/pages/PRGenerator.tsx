@@ -859,11 +859,11 @@ export default function PRGenerator() {
       
       // Fill in the header fields based on template coordinates
       
-      // VENDOR field - positioned in the large left box
+      // VENDOR field - aligned with PR Date and PR Number level
       firstPage.drawText(pr.supplier, {
         x: 120,
-        y: 565,
-        size: 11,
+        y: 580,
+        size: 10,
         font: font,
         color: rgb(0, 0, 0),
       });
@@ -910,8 +910,8 @@ export default function PRGenerator() {
           // Update header info on new page
           currentPage.drawText(pr.supplier, {
             x: 120,
-            y: 565,
-            size: 11,
+            y: 580,
+            size: 10,
             font: font,
             color: rgb(0, 0, 0),
           });
@@ -933,23 +933,23 @@ export default function PRGenerator() {
           });
         }
         
-        // Table starting Y position (based on actual template)
-        const tableStartY = 495;
-        const rowHeight = 11;
+        // Table starting Y position (based on actual template) - move higher
+        const tableStartY = 520;
+        const rowHeight = 14.5; // Increased spacing between items
         
-        // Column X positions based on actual template layout from screenshot
+        // Column X positions - balance the alignment
         const columns = {
-          item: 33,         // Item column (centered in first narrow column)
-          drawingNo: 85,    // Drawing No.
-          rev: 125,         // Rev  
-          description: 160, // Description
-          maker: 370,       // Maker (move left)
-          modelPart: 470,   // Model/Part No.
-          sub: 560,         // Sub (Qty)
-          total: 595,       // Total (Qty) - move left slightly
-          unitPrice: 650,   // Unit Price
-          dateReq: 720,     // Date Required
-          remarks: 800      // Remarks
+          item: 45,         // Item column (centered)
+          drawingNo: 95,    // Drawing No.
+          rev: 135,         // Rev
+          description: 190, // Description
+          maker: 440,       // Maker - pull back to the left
+          modelPart: 500,   // Model/Part No.
+          sub: 630,         // Sub (Qty) - keep the good position
+          total: 625,       // Total (Qty) - leave empty
+          unitPrice: 685,   // Unit Price
+          dateReq: 750,     // Date Required
+          remarks: 820      // Remarks - adjust alignment
         };
         
         // Draw items for this page
@@ -966,48 +966,48 @@ export default function PRGenerator() {
             color: rgb(0, 0, 0),
           });
           
-          // Description (truncate if too long)
+          // Description (one line, truncate if necessary)
           let description = item.description;
-          if (description.length > 30) {
-            description = description.substring(0, 27) + '...';
+          if (description.length > 35) {
+            description = description.substring(0, 32) + '...';
           }
           currentPage.drawText(description, {
             x: columns.description,
             y: yPos,
-            size: 7,
+            size: 8,
             font: font,
             color: rgb(0, 0, 0),
           });
           
-          // Maker (supplier)
+          // Maker (supplier) - one line
           let maker = item.supplier;
-          if (maker.length > 12) {
-            maker = maker.substring(0, 9) + '...';
+          if (maker.length > 10) {
+            maker = maker.substring(0, 7) + '...';
           }
           currentPage.drawText(maker, {
             x: columns.maker,
             y: yPos,
-            size: 7,
+            size: 8,
             font: font,
             color: rgb(0, 0, 0),
           });
           
-          // Model / Part No.
+          // Model / Part No. - one line
           let partNo = item.partNumber;
-          if (partNo.length > 18) {
-            partNo = partNo.substring(0, 15) + '...';
+          if (partNo.length > 15) {
+            partNo = partNo.substring(0, 12) + '...';
           }
           currentPage.drawText(partNo, {
             x: columns.modelPart,
             y: yPos,
-            size: 7,
+            size: 8,
             font: font,
             color: rgb(0, 0, 0),
           });
           
-          // Quantity in Total column (show as integer)
+          // Quantity in Sub column (integer only)
           currentPage.drawText(item.quantity.toString(), {
-            x: columns.total,
+            x: columns.sub,
             y: yPos,
             size: 8,
             font: font,
@@ -1019,21 +1019,21 @@ export default function PRGenerator() {
           currentPage.drawText(unitPrice, {
             x: columns.unitPrice,
             y: yPos,
-            size: 7,
+            size: 8,
             font: font,
             color: rgb(0, 0, 0),
           });
           
-          // Remarks (if any)
+          // Remarks (if any) - one line
           if (item.remarks) {
             let remarks = item.remarks;
-            if (remarks.length > 10) {
-              remarks = remarks.substring(0, 7) + '...';
+            if (remarks.length > 8) {
+              remarks = remarks.substring(0, 5) + '...';
             }
             currentPage.drawText(remarks, {
               x: columns.remarks,
               y: yPos,
-              size: 6,
+              size: 7,
               font: font,
               color: rgb(0, 0, 0),
             });
@@ -1047,11 +1047,11 @@ export default function PRGenerator() {
       const lastChunkLength = itemChunks[lastPageIndex].length;
       
       // Position total row below last item
-      const totalY = 495 - (lastChunkLength * 11) - 15;
+      const totalY = 520 - (lastChunkLength * 14.5) - 15;
       
       // Draw only the total amount (the template already has "Total:" text)
       lastPage.drawText(`${pr.totalValue.toLocaleString()}`, {
-        x: 650,
+        x: 685,
         y: totalY,
         size: 9,
         font: boldFont,
