@@ -886,14 +886,20 @@ export default function PRGenerator() {
         color: rgb(0, 0, 0),
       });
       
-      // Process items in chunks of 15 per page
-      const itemsPerPage = 15;
+      // Table starting Y position (based on actual template) - move higher
+      const tableStartY = 520;
+      const rowHeight = 16; // Optimal spacing for text positioning above lines
+      
+      // Simple fixed chunking - 6 items per page to prevent overflow
+      const itemsPerPage = 6;
       const itemChunks = [];
       for (let i = 0; i < pr.items.length; i += itemsPerPage) {
         itemChunks.push(pr.items.slice(i, i + itemsPerPage));
       }
       
       // Process each page of items
+      let finalCurrentY = tableStartY;
+      
       for (let pageIndex = 0; pageIndex < itemChunks.length; pageIndex++) {
         const items = itemChunks[pageIndex];
         let currentPage;
@@ -933,10 +939,6 @@ export default function PRGenerator() {
           });
         }
         
-        // Table starting Y position (based on actual template) - move higher
-        const tableStartY = 520;
-        const rowHeight = 14.5; // Increased spacing between items
-        
         // Column X positions - balance the alignment
         const columns = {
           item: 45,         // Item column (centered)
@@ -947,17 +949,181 @@ export default function PRGenerator() {
           modelPart: 500,   // Model/Part No.
           sub: 630,         // Sub (Qty) - keep the good position
           total: 625,       // Total (Qty) - leave empty
-          unitPrice: 685,   // Unit Price
+          unitPrice: 675,   // Unit Price - moved 10 points to the left
           dateReq: 750,     // Date Required
-          remarks: 820      // Remarks - adjust alignment
+          remarks: 810      // Remarks - adjusted to 810 (10 points back from 800)
         };
         
-        // Draw items for this page
+        // Dynamic text measurement and positioning utilities
+        const measureTextWidth = (text: string, fontSize: number) => {
+          // More accurate character width calculation based on font size
+          const avgCharWidth = fontSize * 0.55; // Slightly more accurate than 0.6
+          return text.length * avgCharWidth;
+        };
+
+        const formatTextWithDynamicPositioning = (
+          text: string, 
+          startX: number, 
+          maxWidth: number, 
+          fontSize: number = 8, 
+          horizontalMargin: number = 20
+        ) => {
+          if (!text || typeof text !== 'string') {
+            return { 
+              lines: [''], 
+              fontSize, 
+              lineHeight: 16, 
+              actualWidth: 0,
+              nextXPosition: startX 
+            };
+          }
+
+          // First split by existing newlines to preserve multi-line structure
+          const existingLines = text.split('\n');
+          const lines: string[] = [];
+          let maxActualWidth = 0;
+
+          // Process each existing line separately
+          for (const existingLine of existingLines) {
+            const words = existingLine.trim().split(' ');
+            let currentLine = '';
+            let currentLineWidth = 0;
+
+            for (const word of words) {
+              const testLine = currentLine ? `${currentLine} ${word}` : word;
+              const testLineWidth = measureTextWidth(testLine, fontSize);
+              
+              // Check if adding this word would exceed the maximum width
+              if (testLineWidth <= maxWidth) {
+                currentLine = testLine;
+                currentLineWidth = testLineWidth;
+              } else {
+                // Current line is full, push it and start new line
+                if (currentLine) {
+                  lines.push(currentLine);
+                  maxActualWidth = Math.max(maxActualWidth, currentLineWidth);
+                }
+                
+                // Handle very long single words that don't fit
+                if (measureTextWidth(word, fontSize) > maxWidth) {
+                  // Break the word with hyphenation
+                  let remainingWord = word;
+                  while (remainingWord.length > 0) {
+                    let breakPoint = remainingWord.length;
+                    
+                    // Find the longest substring that fits
+                    for (let i = 1; i <= remainingWord.length; i++) {
+                      const testSubstring = remainingWord.substring(0, i) + (i < remainingWord.length ? '-' : '');
+                      if (measureTextWidth(testSubstring, fontSize) > maxWidth) {
+                        breakPoint = Math.max(1, i - 1); // At least 1 character
+                        break;
+                      }
+                    }
+                    
+                    const linePart = remainingWord.substring(0, breakPoint) + (breakPoint < remainingWord.length ? '-' : '');
+                    lines.push(linePart);
+                    maxActualWidth = Math.max(maxActualWidth, measureTextWidth(linePart, fontSize));
+                    remainingWord = remainingWord.substring(breakPoint);
+                  }
+                  currentLine = '';
+                  currentLineWidth = 0;
+                } else {
+                  // Start new line with current word
+                  currentLine = word;
+                  currentLineWidth = measureTextWidth(word, fontSize);
+                }
+              }
+            }
+
+            // Push the final line for this existing line
+            if (currentLine) {
+              lines.push(currentLine);
+              maxActualWidth = Math.max(maxActualWidth, currentLineWidth);
+            }
+          }
+
+          const nextXPosition = startX + maxActualWidth + horizontalMargin;
+
+          return {
+            lines: lines.length > 0 ? lines : [''],
+            fontSize,
+            lineHeight: 16,
+            actualWidth: maxActualWidth,
+            nextXPosition: nextXPosition
+          };
+        };
+
+        // Configuration for horizontal spacing
+        const textConfig = {
+          horizontalMargin: 25, // Configurable margin between fields
+          columnMaxWidths: {
+            description: 240,
+            maker: 55,
+            partNumber: 120,
+            remarks: 150 // Increased from 60 to 150 for full text display
+          }
+        };
+        
+        // Draw items for this page with simple row spacing
+        let currentY = tableStartY;
+        
         items.forEach((item, index) => {
           const globalIndex = pageIndex * itemsPerPage + index;
-          const yPos = tableStartY - (index * rowHeight);
           
-          // Item number (centered in first column)
+          // Calculate dynamic positioning for each field
+          let currentXPosition = columns.description;
+          
+          const descriptionFormat = formatTextWithDynamicPositioning(
+            item.description || '', 
+            currentXPosition, 
+            textConfig.columnMaxWidths.description, 
+            8, 
+            textConfig.horizontalMargin
+          );
+          currentXPosition = Math.min(descriptionFormat.nextXPosition, columns.maker); // Don't exceed maker column
+          
+          const makerFormat = formatTextWithDynamicPositioning(
+            item.supplier || '', 
+            currentXPosition, 
+            textConfig.columnMaxWidths.maker, 
+            8, 
+            textConfig.horizontalMargin
+          );
+          currentXPosition = Math.min(makerFormat.nextXPosition, columns.modelPart); // Don't exceed part number column
+          
+          const partNoFormat = formatTextWithDynamicPositioning(
+            item.partNumber || '', 
+            currentXPosition, 
+            textConfig.columnMaxWidths.partNumber, 
+            8, 
+            textConfig.horizontalMargin
+          );
+          
+          const remarksFormat = item.remarks ? formatTextWithDynamicPositioning(
+            item.remarks, 
+            columns.remarks, 
+            textConfig.columnMaxWidths.remarks, 
+            7, 
+            textConfig.horizontalMargin
+          ) : { lines: [''], fontSize: 7, lineHeight: 16, actualWidth: 0, nextXPosition: columns.remarks };
+          
+          // Find the maximum number of lines needed for this row
+          const maxLines = Math.max(
+            descriptionFormat.lines.length,
+            makerFormat.lines.length,
+            partNoFormat.lines.length,
+            remarksFormat.lines.length,
+            1 // Minimum 1 line
+          );
+          
+          // Calculate proper row height with consistent spacing
+          const baseRowHeight = 20; // Base height for single line items
+          const lineSpacing = 16; // Fixed 16pt spacing between lines
+          const rowPadding = 8; // Additional padding between rows
+          const actualRowHeight = baseRowHeight + ((maxLines - 1) * lineSpacing) + rowPadding;
+          const yPos = currentY + 4; // Add 4 points offset to position text above the table lines
+          
+          // Item number
           currentPage.drawText((globalIndex + 1).toString(), {
             x: columns.item,
             y: yPos,
@@ -966,46 +1132,85 @@ export default function PRGenerator() {
             color: rgb(0, 0, 0),
           });
           
-          // Description (one line, truncate if necessary)
-          let description = item.description;
-          if (description.length > 35) {
-            description = description.substring(0, 32) + '...';
-          }
-          currentPage.drawText(description, {
-            x: columns.description,
-            y: yPos,
-            size: 8,
-            font: font,
-            color: rgb(0, 0, 0),
+          // Description (multi-line) - dynamic positioning with proper spacing
+          let descriptionStartX = columns.description;
+          descriptionFormat.lines.forEach((line, lineIndex) => {
+            if (line.trim()) {
+              currentPage.drawText(line, {
+                x: descriptionStartX,
+                y: yPos - (lineIndex * 16),
+                size: descriptionFormat.fontSize,
+                font: font,
+                color: rgb(0, 0, 0),
+              });
+            }
           });
           
-          // Maker (supplier) - one line
-          let maker = item.supplier;
-          if (maker.length > 10) {
-            maker = maker.substring(0, 7) + '...';
-          }
-          currentPage.drawText(maker, {
-            x: columns.maker,
-            y: yPos,
-            size: 8,
-            font: font,
-            color: rgb(0, 0, 0),
+          // Maker (supplier) - with boundary checking
+          makerFormat.lines.forEach((line, lineIndex) => {
+            if (line.trim()) {
+              const textX = columns.maker;
+              const textY = yPos - (lineIndex * 16);
+              
+              // Check if text would overflow into model/part column (starts at 500)
+              const estimatedTextWidth = line.length * (makerFormat.fontSize * 0.6);
+              const maxAllowedWidth = columns.modelPart - columns.maker - 10; // 10pt padding
+              
+              if (estimatedTextWidth > maxAllowedWidth) {
+                const maxChars = Math.floor(maxAllowedWidth / (makerFormat.fontSize * 0.6)) - 3;
+                const truncatedLine = line.substring(0, maxChars) + '...';
+                currentPage.drawText(truncatedLine, {
+                  x: textX,
+                  y: textY,
+                  size: makerFormat.fontSize,
+                  font: font,
+                  color: rgb(0, 0, 0),
+                });
+              } else {
+                currentPage.drawText(line, {
+                  x: textX,
+                  y: textY,
+                  size: makerFormat.fontSize,
+                  font: font,
+                  color: rgb(0, 0, 0),
+                });
+              }
+            }
           });
           
-          // Model / Part No. - one line
-          let partNo = item.partNumber;
-          if (partNo.length > 15) {
-            partNo = partNo.substring(0, 12) + '...';
-          }
-          currentPage.drawText(partNo, {
-            x: columns.modelPart,
-            y: yPos,
-            size: 8,
-            font: font,
-            color: rgb(0, 0, 0),
+          // Model / Part No. - with boundary checking
+          partNoFormat.lines.forEach((line, lineIndex) => {
+            if (line.trim()) {
+              const textX = columns.modelPart;
+              const textY = yPos - (lineIndex * 16);
+              
+              // Check if text would overflow into qty column (starts at 630)
+              const estimatedTextWidth = line.length * (partNoFormat.fontSize * 0.6);
+              const maxAllowedWidth = columns.sub - columns.modelPart - 10; // 10pt padding
+              
+              if (estimatedTextWidth > maxAllowedWidth) {
+                const maxChars = Math.floor(maxAllowedWidth / (partNoFormat.fontSize * 0.6)) - 3;
+                const truncatedLine = line.substring(0, maxChars) + '...';
+                currentPage.drawText(truncatedLine, {
+                  x: textX,
+                  y: textY,
+                  size: partNoFormat.fontSize,
+                  font: font,
+                  color: rgb(0, 0, 0),
+                });
+              } else {
+                currentPage.drawText(line, {
+                  x: textX,
+                  y: textY,
+                  size: partNoFormat.fontSize,
+                  font: font,
+                  color: rgb(0, 0, 0),
+                });
+              }
+            }
           });
           
-          // Quantity in Sub column (integer only)
+          // Quantity
           currentPage.drawText(item.quantity.toString(), {
             x: columns.sub,
             y: yPos,
@@ -1014,9 +1219,8 @@ export default function PRGenerator() {
             color: rgb(0, 0, 0),
           });
           
-          // Unit Price (numeric only for Excel compatibility)
-          const unitPrice = `${(item.unitPrice || 0).toFixed(2)}`;
-          currentPage.drawText(unitPrice, {
+          // Unit Price
+          currentPage.drawText(`${(item.unitPrice || 0).toFixed(2)}`, {
             x: columns.unitPrice,
             y: yPos,
             size: 8,
@@ -1024,30 +1228,37 @@ export default function PRGenerator() {
             color: rgb(0, 0, 0),
           });
           
-          // Remarks (if any) - one line
+          // Remarks - display full text without truncation
           if (item.remarks) {
-            let remarks = item.remarks;
-            if (remarks.length > 8) {
-              remarks = remarks.substring(0, 5) + '...';
-            }
-            currentPage.drawText(remarks, {
-              x: columns.remarks,
-              y: yPos,
-              size: 7,
-              font: font,
-              color: rgb(0, 0, 0),
+            remarksFormat.lines.forEach((line, lineIndex) => {
+              if (line.trim()) {
+                currentPage.drawText(line, {
+                  x: columns.remarks,
+                  y: yPos - (lineIndex * 16),
+                  size: remarksFormat.fontSize,
+                  font: font,
+                  color: rgb(0, 0, 0),
+                });
+              }
             });
           }
+          
+          // Move to next row - dynamic spacing based on content
+          currentY -= actualRowHeight;
         });
+        
+        // Store the final Y position from the last page
+        if (pageIndex === itemChunks.length - 1) {
+          finalCurrentY = currentY;
+        }
       }
       
       // Add total on the last page
       const lastPageIndex = itemChunks.length - 1;
       const lastPage = pages[pages.length - 1];
-      const lastChunkLength = itemChunks[lastPageIndex].length;
       
-      // Position total row below last item
-      const totalY = 520 - (lastChunkLength * 14.5) - 15;
+      // Position total row below last item using dynamic Y position
+      const totalY = finalCurrentY - 15; // 15 points below the last item
       
       // Draw only the total amount (the template already has "Total:" text)
       lastPage.drawText(`${pr.totalValue.toLocaleString()}`, {
@@ -1086,53 +1297,58 @@ export default function PRGenerator() {
     setDownloadingPR(pr.id);
     
     try {
-      // Create PR data for Excel export
+      // Create PR data matching PDF template format
       const prData = [
-      // Header information
-      ['PURCHASE REQUISITION'],
-      [],
-      ['PR Number:', pr.prNumber],
-      ['Supplier:', pr.supplier],
-      ['Date Created:', pr.createdAt],
-      ['Status:', pr.status],
-      ['Total Items:', pr.totalItems],
-      ['Total Value:', `SGD ${pr.totalValue.toLocaleString()}`],
-      [],
-      
-      // Items table header
-      ['Item #', 'Symbol', 'Part Number', 'Description', 'Quantity', 'Unit Price', 'Total Price', 'Remarks'],
-      
-      // Items data
-      ...pr.items.map((item, index) => [
-        index + 1,
-        item.symbol || '',
-        item.partNumber,
-        item.description,
-        item.quantity,
-        `SGD ${(item.unitPrice || 0).toLocaleString()}`,
-        `SGD ${(item.totalPrice || 0).toLocaleString()}`,
-        item.remarks || ''
-      ]),
-      
-      // Summary
-      [],
-      ['', '', '', '', '', 'TOTAL:', `₱${pr.totalValue.toLocaleString()}`, '']
-    ];
+        // Header row with company name
+        ['CMR', '', '', '', '', '', '', '', '', '', ''],
+        [],
+        // Purchase Requisition title
+        ['PURCHASE REQUISITION', '', '', '', '', '', '', '', '', '', ''],
+        [],
+        // Header information matching PDF layout
+        ['VENDOR:', pr.supplier, '', '', 'PR Date:', new Date().toLocaleDateString('en-GB'), 'P.R. NO:', pr.prNumber, '', '', ''],
+        [],
+        // Table headers matching PDF template
+        ['Item', 'Drawing No.', 'Rev', 'Description', 'Maker', 'Model / Part No.', 'Sub', 'Total', 'Unit Price', 'Date Required', 'Remarks'],
+        
+        // Items data with full data (no truncation)
+        ...pr.items.map((item, index) => [
+          index + 1,                    // Item
+          '',                          // Drawing No.
+          '',                          // Rev
+          item.description,            // Description (full text)
+          item.supplier,               // Maker (full text)
+          item.partNumber,             // Model/Part No. (full text)
+          item.quantity,               // Sub (Quantity)
+          '',                          // Total (left empty like PDF)
+          (item.unitPrice || 0).toFixed(2),  // Unit Price
+          '',                          // Date Required
+          item.remarks || ''           // Remarks (full text)
+        ]),
+        
+        // Empty row before total
+        [],
+        // Total row
+        ['', '', '', '', '', '', '', '', `Total: ${pr.totalValue.toLocaleString()}`, '', '']
+      ];
 
     // Create workbook and worksheet
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet(prData);
 
-    // Set column widths
+    // Set column widths matching PDF template layout
     const colWidths = [
-      { wch: 8 },  // Item #
-      { wch: 15 }, // Symbol
-      { wch: 20 }, // Part Number
-      { wch: 40 }, // Description
-      { wch: 10 }, // Quantity
-      { wch: 15 }, // Unit Price
-      { wch: 15 }, // Total Price
-      { wch: 20 }  // Remarks
+      { wch: 6 },   // Item
+      { wch: 12 },  // Drawing No.
+      { wch: 6 },   // Rev
+      { wch: 35 },  // Description
+      { wch: 12 },  // Maker
+      { wch: 18 },  // Model / Part No.
+      { wch: 6 },   // Sub (Quantity)
+      { wch: 8 },   // Total
+      { wch: 12 },  // Unit Price
+      { wch: 12 },  // Date Required
+      { wch: 15 }   // Remarks
     ];
     ws['!cols'] = colWidths;
 
