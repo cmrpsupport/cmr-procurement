@@ -64,17 +64,6 @@ export default function Index() {
               <span className="text-xl font-semibold text-foreground">CMR Procurement</span>
             </div>
             <div className="flex items-center space-x-4">
-              <nav className="hidden md:flex items-center space-x-6">
-                <Link to="/pr-generator" className="text-muted-foreground hover:text-primary transition-colors">
-                  PR Generator
-                </Link>
-                <Link to="/document-assistant" className="text-muted-foreground hover:text-primary transition-colors">
-                  Document Assistant
-                </Link>
-                <Link to="/report-builder" className="text-muted-foreground hover:text-primary transition-colors">
-                  Report Builder
-                </Link>
-              </nav>
               <ThemeToggle />
             </div>
           </div>

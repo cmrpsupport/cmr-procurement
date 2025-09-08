@@ -1024,7 +1024,7 @@ export default function DocumentAssistant() {
                           </Button>
                                                      <p className="text-xs text-muted-foreground mt-4">
                           AI will automatically extract: Supplier Name, PO Number, Project Number, Job Number, DO Number, Delivery Date, and Items<br/>
-                          <span className="text-primary font-medium">✓ Advanced AI Processing • Enterprise-Grade Accuracy!</span>
+                          <span className="text-primary font-medium">✓ Advanced AI Processing</span>
                         </p>
                       </div>
                     </div>

@@ -1257,14 +1257,12 @@ export default function PRGenerator() {
       const lastPageIndex = itemChunks.length - 1;
       const lastPage = pages[pages.length - 1];
       
-      // Position total row below last item using dynamic Y position
-      const totalY = finalCurrentY - 15; // 15 points below the last item
-      
-      // Draw only the total amount (the template already has "Total:" text)
+      // Position total amount right next to the "Total:" text in the template
+      // Based on the template, Total: appears in the table row above the signature section
       lastPage.drawText(`${pr.totalValue.toLocaleString()}`, {
-        x: 685,
-        y: totalY,
-        size: 9,
+        x: 680, // Right after the "Total:" text in the table
+        y: 270, // Y position where the Total row appears in the table
+        size: 10,
         font: boldFont,
         color: rgb(0, 0, 0),
       });
@@ -1533,15 +1531,9 @@ export default function PRGenerator() {
                   )}
 
                   <div className="mt-6">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-                        <AlertCircle className="w-4 h-4" />
-                        <span>Make sure your BOM includes columns for: Qty, Symbol, Description, Maker, Model/Part No., and Remarks</span>
-                      </div>
-                      <Button variant="outline" size="sm" onClick={downloadTemplate}>
-                        <Download className="w-4 h-4 mr-2" />
-                        Download Template
-                      </Button>
+                    <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+                      <AlertCircle className="w-4 h-4" />
+                      <span>Make sure your BOM includes columns for: Qty, Symbol, Description, Maker, Model/Part No., and Remarks</span>
                     </div>
                   </div>
                 </CardContent>
@@ -1969,18 +1961,6 @@ export default function PRGenerator() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Recent Activity</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-center text-muted-foreground py-4">
-                  <Clock className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">No recent activity</p>
-                  <p className="text-xs">Upload your first BOM to get started</p>
-                </div>
-              </CardContent>
-            </Card>
           </div>
         </div>
       </div>
