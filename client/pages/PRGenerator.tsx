@@ -2023,7 +2023,7 @@ export default function PRGenerator() {
                 </div>
                 <div>
                   <label className="text-sm font-medium text-foreground">Total Value</label>
-                  <p className="text-sm text-foreground mt-1">₱{(editingPR || selectedPR)!.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0).toLocaleString()}</p>
+                  <p className="text-sm text-foreground mt-1">SGD {(editingPR || selectedPR)!.items.reduce((sum, item) => sum + (item.totalPrice || 0), 0).toLocaleString()}</p>
                 </div>
               </div>
 
@@ -2088,7 +2088,7 @@ export default function PRGenerator() {
                               className="w-24"
                             />
                           ) : (
-                            `₱${item.unitPrice?.toLocaleString()}`
+                            `SGD ${item.unitPrice?.toLocaleString()}`
                           )}
                         </TableCell>
                         <TableCell>SGD {item.totalPrice?.toLocaleString()}</TableCell>
