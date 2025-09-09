@@ -42,6 +42,8 @@ interface BOMItem {
   totalPrice?: number;
   rowIndex: number;
   sheetName?: string;
+  isAccessory?: boolean; // Flag to identify accessory items
+  mainItemPartNumber?: string; // Link accessories to their parent main item
 }
 
 interface PurchaseRequisition {
@@ -360,6 +362,8 @@ export default function PRGenerator() {
           processedSheets.push(sheetName);
 
           // Process rows with multi-line description support
+          let currentMainItemPartNumber: string | null = null; // Track the current main item
+          
           for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
         
@@ -466,6 +470,20 @@ export default function PRGenerator() {
             console.log(`No continuation rows found for ${partNumber}, keeping single-line description: "${description}"`);
           }
           
+          // Check if this is an accessory item (description starts with "(number)")
+          const isAccessory = /^\(\d+\)/.test(description.trim());
+          
+          // Update the current main item tracker
+          if (!isAccessory && partNumber) {
+            currentMainItemPartNumber = partNumber;
+            console.log(`📋 New main item detected: ${partNumber}`);
+          }
+          
+          // Debug accessory detection
+          if (isAccessory) {
+            console.log(`🔧 Accessory detected: ${description.trim()} | Part: ${partNumber} | Main Item: ${currentMainItemPartNumber}`);
+          }
+          
           // Now create the BOM item with the potentially merged description
           const item: BOMItem = {
             partNumber,
@@ -476,7 +494,9 @@ export default function PRGenerator() {
             remarks,
             unitPrice: 0, // Default to 0, user will enter manually
             rowIndex: i + headerRow + 2,
-            sheetName
+            sheetName,
+            isAccessory,
+            mainItemPartNumber: isAccessory ? currentMainItemPartNumber : undefined
           };
           item.totalPrice = item.unitPrice! * item.quantity;
           
@@ -510,13 +530,25 @@ export default function PRGenerator() {
             supplierItems[item.supplier] = [];
           }
           
-          // Check if item with same supplier and part number already exists
-          const existingItemIndex = supplierItems[item.supplier].findIndex(
-            existingItem => existingItem.partNumber === item.partNumber
-          );
+          let existingItemIndex = -1;
+          
+          if (item.isAccessory) {
+            // For accessories: combine only if same part number AND same main item
+            existingItemIndex = supplierItems[item.supplier].findIndex(
+              existingItem => existingItem.partNumber === item.partNumber &&
+                             existingItem.isAccessory &&
+                             existingItem.mainItemPartNumber === item.mainItemPartNumber
+            );
+          } else {
+            // For main items: combine if same part number and not accessory
+            existingItemIndex = supplierItems[item.supplier].findIndex(
+              existingItem => existingItem.partNumber === item.partNumber && 
+                             !existingItem.isAccessory
+            );
+          }
           
           if (existingItemIndex !== -1) {
-            // Item exists - combine quantities and merge sheet info
+            // Item exists with matching criteria - combine quantities and merge info
             const existingItem = supplierItems[item.supplier][existingItemIndex];
             existingItem.quantity += item.quantity;
             existingItem.totalPrice = (existingItem.unitPrice || 0) * existingItem.quantity;
@@ -543,13 +575,22 @@ export default function PRGenerator() {
                 item.remarks;
             }
             
-            console.log(`Combined item: ${item.partNumber} from ${item.sheetName} (new qty: ${existingItem.quantity})`);
+            if (item.isAccessory) {
+              console.log(`✅ Combined accessory: ${item.partNumber} for main item ${item.mainItemPartNumber} from ${item.sheetName} (added qty: ${item.quantity}, new total qty: ${existingItem.quantity})`);
+            } else {
+              console.log(`✅ Combined main item: ${item.partNumber} from ${item.sheetName} (added qty: ${item.quantity}, new total qty: ${existingItem.quantity})`);
+            }
           } else {
             // New item - add to list
             itemsGrouped[item.supplier]++;
             supplierItems[item.supplier].push(item);
             totalItems++;
-            console.log(`Added new item: ${item.partNumber} from ${item.sheetName} (qty: ${item.quantity})`);
+            
+            if (item.isAccessory) {
+              console.log(`Added new accessory: ${item.partNumber} for main item ${item.mainItemPartNumber} from ${item.sheetName} (qty: ${item.quantity})`);
+            } else {
+              console.log(`Added new main item: ${item.partNumber} from ${item.sheetName} (qty: ${item.quantity})`);
+            }
           }
           
           // Category tracking removed
