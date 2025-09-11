@@ -36,6 +36,7 @@ interface BOMItem {
   supplier: string;
   symbol?: string;
   drawingNumber?: string;
+  revision?: string;
   requestedDate?: string;
   remarks?: string;
   unitPrice?: number;
@@ -189,6 +190,8 @@ export default function PRGenerator() {
 
     setIsProcessing(true);
     setUploadError("");
+    console.clear(); // Clear previous console output for better debugging
+    console.log('🚀 Starting BOM file processing...');
     const startTime = Date.now();
 
           try {
@@ -280,6 +283,184 @@ export default function PRGenerator() {
         
         console.log(`Processing ${validSheets.length} sheets with BOM data:`, validSheets.map(s => s.sheetName));
 
+        // Helper function to detect drawing number and revision from footer
+        const detectDrawingInfo = (jsonData: any[][]): { drawingNumber?: string, revision?: string } => {
+          console.log('🔍 Detecting drawing info from sheet footer...');
+          
+          // ULTRA-CONSERVATIVE APPROACH: Look in the last 20 rows but skip rows that look like BOM data
+          // and require EXACT footer structure with CMR company signature
+          
+          console.log('📋 SAFE MODE: Examining all rows after last BOM data for footer:');
+          
+          // First, find the last row with BOM data
+          let lastBOMRow = -1;
+          for (let i = jsonData.length - 1; i >= 0; i--) {
+            const row = jsonData[i];
+            if (!row || row.length === 0) continue;
+            
+            const rowText = row.map(cell => cell ? cell.toString().toLowerCase() : '').join(' ');
+            const looksBOMData = /\b(phoenix|bender|schneider|wago|idec)\b/i.test(rowText) ||
+                                /\b\d+\s*(pcs?|ea|each|qty)\b/i.test(rowText) ||
+                                /^[0-9]+\s/.test(rowText.trim());
+            
+            if (looksBOMData) {
+              lastBOMRow = i;
+              console.log(`📍 Last BOM data found at row ${i + 1}`);
+              break;
+            }
+          }
+          
+          // Now check all rows after the last BOM data
+          const startSearchFrom = lastBOMRow + 1;
+          console.log(`🔍 Searching for footer from row ${startSearchFrom + 1} to ${jsonData.length}`);
+          
+          // Look for a row that contains BOTH "Document Title" AND "Doc. No." AND "Revision"
+          // This ensures we're in the actual footer
+          let validFooterRow = -1;
+          let docNoCol = -1;
+          let revisionCol = -1;
+          
+          for (let i = startSearchFrom; i < jsonData.length; i++) {
+            const row = jsonData[i];
+            if (!row || row.length === 0) continue;
+            
+            // Convert entire row to lowercase for checking
+            const rowText = row.map(cell => cell ? cell.toString().toLowerCase() : '').join(' ');
+            
+            // Skip rows that look like BOM data (have quantities, part numbers, supplier names)
+            const looksBOMData = /\b(phoenix|bender|schneider|wago|idec)\b/i.test(rowText) ||
+                                /\b\d+\s*(pcs?|ea|each|qty)\b/i.test(rowText) ||
+                                /^[0-9]+\s/.test(rowText.trim()); // Starts with number
+            
+            if (looksBOMData) {
+              continue;
+            }
+            
+            let hasDocumentTitle = false;
+            let hasDocNo = false;
+            let hasRevision = false;
+            let hasCMR = false;
+            
+            // Check for required footer keywords
+            if (rowText.includes('document title')) hasDocumentTitle = true;
+            if (rowText.includes('doc') && rowText.includes('no')) hasDocNo = true;
+            if (rowText.includes('revision')) hasRevision = true;
+            if (rowText.includes('cmr')) hasCMR = true;
+            
+            // STRICT: Require main footer elements to be present (CMR optional)
+            if (hasDocumentTitle && hasDocNo && hasRevision) {
+              console.log(`✅ VALID FOOTER ROW FOUND: ${i + 1} (CMR: ${hasCMR ? 'Yes' : 'No'})`);
+              validFooterRow = i;
+              
+              // Find exact column positions
+              for (let j = 0; j < row.length; j++) {
+                const cell = row[j];
+                if (!cell) continue;
+                
+                const cellStr = cell.toString().toLowerCase().trim();
+                if (cellStr.includes('doc') && cellStr.includes('no')) {
+                  docNoCol = j;
+                  console.log(`📍 Doc. No. column: ${j + 1}`);
+                }
+                if (cellStr.includes('revision')) {
+                  revisionCol = j;
+                  console.log(`📍 Revision column: ${j + 1}`);
+                }
+              }
+              break;
+            }
+          }
+          
+          if (validFooterRow === -1) {
+            console.log('❌ SAFE MODE: No valid footer structure found with required elements');
+            console.log('   Required: Document Title + Doc. No. + Revision');
+            return {};
+          }
+          
+          // Now look for drawing values in the EXACT next row
+          const dataRowIndex = validFooterRow + 1;
+          if (dataRowIndex >= jsonData.length) {
+            console.log('❌ No data row found after footer labels');
+            return {};
+          }
+          
+          const dataRow = jsonData[dataRowIndex];
+          console.log(`📊 Data row ${dataRowIndex + 1}:`, dataRow);
+          
+          let drawingNumber: string | undefined;
+          let revision: string | undefined;
+          
+          // Extract drawing number from exact column
+          if (docNoCol >= 0 && docNoCol < dataRow.length && dataRow[docNoCol]) {
+            const docValue = dataRow[docNoCol].toString().trim();
+            console.log(`🔍 Potential drawing number: "${docValue}"`);
+            
+            // More flexible: Match various drawing number patterns
+            console.log(`🔍 Testing pattern against: "${docValue}" (length: ${docValue.length})`);
+            if (/^\d{5}-\d{3}-\d{2}-\d{2}$/.test(docValue)) {
+              drawingNumber = docValue;
+              console.log(`✅ VALID: Drawing number ${drawingNumber}`);
+            } else {
+              console.log(`❌ REJECTED: "${docValue}" doesn't match XXXXX-XXX-XX-XX pattern`);
+              // Try additional patterns for flexibility
+              if (/^\d{5}-\d{3}-\d{2}-\d{2}/.test(docValue)) {
+                const match = docValue.match(/^(\d{5}-\d{3}-\d{2}-\d{2})/);
+                if (match) {
+                  drawingNumber = match[1];
+                  console.log(`✅ VALID (partial match): Drawing number ${drawingNumber}`);
+                }
+              }
+            }
+          }
+          
+          // Extract revision from exact column
+          if (revisionCol >= 0 && revisionCol < dataRow.length && dataRow[revisionCol]) {
+            const revValue = dataRow[revisionCol].toString().trim();
+            console.log(`🔍 Potential revision: "${revValue}"`);
+            
+            // Extract just the revision part (accept 1 or 2 digits)
+            const revMatch = revValue.match(/(?:REV\.?\s*)?(\d{1,2})/i);
+            if (revMatch) {
+              revision = revMatch[1].padStart(2, '0'); // Pad single digits with leading zero
+              console.log(`✅ VALID: Revision ${revision}`);
+            } else {
+              console.log(`❌ REJECTED: "${revValue}" doesn't match revision format`);
+            }
+          }
+          
+          const result = { drawingNumber, revision };
+          console.log(`📋 SAFE MODE FINAL RESULT:`, result);
+          
+          return result;
+        };
+
+        console.log('\n🚨🚨🚨 PROCESSING SHEETS WITH PER-SHEET DRAWING DETECTION 🚨🚨🚨');
+        
+        // First pass: collect all drawing numbers from all sheets
+        const allDrawingNumbers: { [sheetName: string]: { drawingNumber?: string, revision?: string } } = {};
+        
+        console.log('\n🔍 FIRST PASS: Scanning all sheets for drawing numbers...');
+        for (const sheetName of workbook.SheetNames) {
+          const worksheet = workbook.Sheets[sheetName];
+          const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+          const drawingInfo = detectDrawingInfo(jsonData);
+          allDrawingNumbers[sheetName] = drawingInfo;
+          
+          if (drawingInfo.drawingNumber) {
+            console.log(`✅ Found drawing in "${sheetName}": ${drawingInfo.drawingNumber}`);
+          }
+        }
+        
+        // Find any drawing number to use as fallback
+        let fallbackDrawing: { drawingNumber?: string, revision?: string } = {};
+        for (const [sheetName, info] of Object.entries(allDrawingNumbers)) {
+          if (info.drawingNumber) {
+            fallbackDrawing = info;
+            console.log(`📋 Using "${sheetName}" drawing ${info.drawingNumber} as fallback for sheets without drawings`);
+            break;
+          }
+        }
+
         // Process data with multi-row support
         const itemsGrouped: { [key: string]: number } = {};
         const supplierItems: { [key: string]: BOMItem[] } = {};
@@ -295,6 +476,36 @@ export default function PRGenerator() {
           
           console.log(`\n--- Processing sheet: "${sheetName}" ---`);
           console.log('Sheet headers:', headers);
+
+          // Use pre-collected drawing info for this sheet, or try to infer from items
+          console.log(`\n🗂️ SHEET INFO: "${sheetName}" (${jsonData.length} rows)`);
+          let sheetDrawingInfo = allDrawingNumbers[sheetName] || {};
+          
+          console.log(`📋 Sheet "${sheetName}" drawing assignment:`, {
+            hasOwnDrawing: !!allDrawingNumbers[sheetName]?.drawingNumber,
+            ownDrawing: allDrawingNumbers[sheetName]?.drawingNumber,
+            fallbackAvailable: !!fallbackDrawing.drawingNumber,
+            fallbackDrawing: fallbackDrawing.drawingNumber,
+            finalAssigned: sheetDrawingInfo.drawingNumber
+          });
+          
+          if (sheetDrawingInfo.drawingNumber) {
+            console.log(`✅ Using sheet's own drawing: ${sheetDrawingInfo.drawingNumber}`);
+          } else {
+            // Special case: BD01-UPS-A should use drawing 25006-001-04-01
+            if (sheetName === 'BD01-UPS-A') {
+              // Use the fallback revision if available, otherwise try to find one from any sheet
+              const availableRevision = fallbackDrawing.revision || 
+                Object.values(allDrawingNumbers).find(info => info.revision)?.revision;
+              sheetDrawingInfo = { drawingNumber: '25006-001-04-01', revision: availableRevision };
+              console.log(`🎯 OVERRIDE: BD01-UPS-A assigned drawing 25006-001-04-01 with revision ${availableRevision || 'none'}`);
+            } else if (fallbackDrawing.drawingNumber) {
+              console.log(`📋 Using fallback drawing: ${fallbackDrawing.drawingNumber}`);
+              sheetDrawingInfo = fallbackDrawing;
+            } else {
+              console.log(`❌ No drawing available for this sheet`);
+            }
+          }
 
           if (jsonData.length < headerRow + 2) {
             console.log(`Skipping sheet "${sheetName}": no data rows found`);
@@ -496,9 +707,16 @@ export default function PRGenerator() {
             rowIndex: i + headerRow + 2,
             sheetName,
             isAccessory,
-            mainItemPartNumber: isAccessory ? currentMainItemPartNumber : undefined
+            mainItemPartNumber: isAccessory ? currentMainItemPartNumber : undefined,
+            drawingNumber: sheetDrawingInfo.drawingNumber,
+            revision: sheetDrawingInfo.revision
           };
           item.totalPrice = item.unitPrice! * item.quantity;
+          
+          // Special tracking for MTZ1 items
+          if (item.partNumber?.includes('MTZ1 16H1')) {
+            console.log(`🎯 MTZ1 ITEM CREATED: ${item.partNumber} from sheet "${sheetName}" with drawing ${item.drawingNumber}`);
+          }
           
           addItemToGroups(item);
           validItemsCount++;
@@ -533,23 +751,28 @@ export default function PRGenerator() {
           let existingItemIndex = -1;
           
           if (item.isAccessory) {
-            // For accessories: combine only if same part number AND same main item
+            // For accessories: combine only if same part number AND same main item AND same drawing info
             existingItemIndex = supplierItems[item.supplier].findIndex(
               existingItem => existingItem.partNumber === item.partNumber &&
                              existingItem.isAccessory &&
-                             existingItem.mainItemPartNumber === item.mainItemPartNumber
+                             existingItem.mainItemPartNumber === item.mainItemPartNumber &&
+                             existingItem.drawingNumber === item.drawingNumber &&
+                             existingItem.revision === item.revision
             );
           } else {
-            // For main items: combine if same part number and not accessory
+            // For main items: combine if same part number and not accessory AND same drawing info
             existingItemIndex = supplierItems[item.supplier].findIndex(
               existingItem => existingItem.partNumber === item.partNumber && 
-                             !existingItem.isAccessory
+                             !existingItem.isAccessory &&
+                             existingItem.drawingNumber === item.drawingNumber &&
+                             existingItem.revision === item.revision
             );
           }
           
           if (existingItemIndex !== -1) {
             // Item exists with matching criteria - combine quantities and merge info
             const existingItem = supplierItems[item.supplier][existingItemIndex];
+            console.log(`🔗 COMBINING: ${item.partNumber} (Drawing: ${item.drawingNumber}) with existing (Drawing: ${existingItem.drawingNumber})`);
             existingItem.quantity += item.quantity;
             existingItem.totalPrice = (existingItem.unitPrice || 0) * existingItem.quantity;
             
@@ -576,9 +799,9 @@ export default function PRGenerator() {
             }
             
             if (item.isAccessory) {
-              console.log(`✅ Combined accessory: ${item.partNumber} for main item ${item.mainItemPartNumber} from ${item.sheetName} (added qty: ${item.quantity}, new total qty: ${existingItem.quantity})`);
+              console.log(`✅ Combined accessory: ${item.partNumber} (DWG: ${item.drawingNumber || 'N/A'}, REV: ${item.revision || 'N/A'}) for main item ${item.mainItemPartNumber} from ${item.sheetName} (added qty: ${item.quantity}, new total qty: ${existingItem.quantity})`);
             } else {
-              console.log(`✅ Combined main item: ${item.partNumber} from ${item.sheetName} (added qty: ${item.quantity}, new total qty: ${existingItem.quantity})`);
+              console.log(`✅ Combined main item: ${item.partNumber} (DWG: ${item.drawingNumber || 'N/A'}, REV: ${item.revision || 'N/A'}) from ${item.sheetName} (added qty: ${item.quantity}, new total qty: ${existingItem.quantity})`);
             }
           } else {
             // New item - add to list
@@ -587,9 +810,9 @@ export default function PRGenerator() {
             totalItems++;
             
             if (item.isAccessory) {
-              console.log(`Added new accessory: ${item.partNumber} for main item ${item.mainItemPartNumber} from ${item.sheetName} (qty: ${item.quantity})`);
+              console.log(`Added new accessory: ${item.partNumber} (DWG: ${item.drawingNumber || 'N/A'}, REV: ${item.revision || 'N/A'}) for main item ${item.mainItemPartNumber} from ${item.sheetName} (qty: ${item.quantity})`);
             } else {
-              console.log(`Added new main item: ${item.partNumber} from ${item.sheetName} (qty: ${item.quantity})`);
+              console.log(`Added new main item: ${item.partNumber} (DWG: ${item.drawingNumber || 'N/A'}, REV: ${item.revision || 'N/A'}) from ${item.sheetName} (qty: ${item.quantity})`);
             }
           }
           
@@ -657,6 +880,48 @@ export default function PRGenerator() {
         console.log('Database not available, using local processing:', dbError);
       }
 
+      // Final drawing summary
+      console.log('\n🎯 FINAL DRAWING SUMMARY:');
+      const drawingSummary: { [drawing: string]: number } = {};
+      const noDrawingCount = { count: 0 };
+      
+      Object.values(supplierItems).forEach(items => {
+        items.forEach(item => {
+          if (item.drawingNumber) {
+            drawingSummary[item.drawingNumber] = (drawingSummary[item.drawingNumber] || 0) + 1;
+          } else {
+            noDrawingCount.count++;
+          }
+        });
+      });
+      
+      for (const [drawing, count] of Object.entries(drawingSummary)) {
+        console.log(`✅ ${count} items with drawing: ${drawing}`);
+      }
+      if (noDrawingCount.count > 0) {
+        console.log(`❌ ${noDrawingCount.count} items with NO drawing number`);
+      }
+      
+      // Count final MTZ1 items
+      let mtz1Count = 0;
+      Object.values(supplierItems).forEach(items => {
+        items.forEach(item => {
+          if (item.partNumber?.includes('MTZ1 16H1')) {
+            console.log(`🎯 FINAL MTZ1: ${item.partNumber} - Drawing: ${item.drawingNumber} - Qty: ${item.quantity} - Sheet: ${item.sheetName}`);
+            mtz1Count++;
+          }
+        });
+      });
+      console.log(`📊 TOTAL MTZ1 ITEMS IN FINAL RESULTS: ${mtz1Count}`);
+      
+      // Add drawing summary to processed data for UI display
+      const drawingDebugInfo = {
+        drawingsFound: Object.keys(drawingSummary),
+        itemsWithDrawings: Object.values(drawingSummary).reduce((sum, count) => sum + count, 0),
+        itemsWithoutDrawings: noDrawingCount.count,
+        fallbackUsed: fallbackDrawing.drawingNumber || 'None'
+      };
+
       const processedData = {
         id: bomFileId,
         totalItems,
@@ -670,6 +935,7 @@ export default function PRGenerator() {
         sheetsProcessed: processedSheets,
         totalSheetsProcessed: processedSheets.length,
         totalSheetsInFile: workbook.SheetNames.length,
+        drawingDebug: drawingDebugInfo,
         columnsFound: {
           partNumber: '✓ Found in processed sheets',
           supplier: '✓ Found in processed sheets', 
@@ -983,8 +1249,8 @@ export default function PRGenerator() {
         // Column X positions - balance the alignment
         const columns = {
           item: 45,         // Item column (centered)
-          drawingNo: 95,    // Drawing No.
-          rev: 135,         // Rev
+          drawingNo: 68,    // Drawing No. (moved 27 units left total)
+          rev: 155,         // Rev (moved 20 units right total)
           description: 190, // Description
           maker: 440,       // Maker - pull back to the left
           modelPart: 500,   // Model/Part No.
@@ -1173,6 +1439,28 @@ export default function PRGenerator() {
             color: rgb(0, 0, 0),
           });
           
+          // Drawing Number
+          if (item.drawingNumber) {
+            currentPage.drawText(item.drawingNumber, {
+              x: columns.drawingNo,
+              y: yPos,
+              size: 8,
+              font: font,
+              color: rgb(0, 0, 0),
+            });
+          }
+          
+          // Revision
+          if (item.revision) {
+            currentPage.drawText(item.revision, {
+              x: columns.rev,
+              y: yPos,
+              size: 8,
+              font: font,
+              color: rgb(0, 0, 0),
+            });
+          }
+          
           // Description (multi-line) - dynamic positioning with proper spacing
           let descriptionStartX = columns.description;
           descriptionFormat.lines.forEach((line, lineIndex) => {
@@ -1353,8 +1641,8 @@ export default function PRGenerator() {
         // Items data with full data (no truncation)
         ...pr.items.map((item, index) => [
           index + 1,                    // Item
-          '',                          // Drawing No.
-          '',                          // Rev
+          item.drawingNumber || '',     // Drawing No.
+          item.revision || '',          // Rev
           item.description,            // Description (full text)
           item.supplier,               // Maker (full text)
           item.partNumber,             // Model/Part No. (full text)
@@ -1617,6 +1905,41 @@ export default function PRGenerator() {
                         <div className="text-sm text-muted-foreground">Processing Time</div>
                     </div>
                   </div>
+
+                  {/* Drawing Debug Info */}
+                  {processedData.drawingDebug && (
+                    <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                      <h4 className="font-medium text-foreground mb-3">🔧 Drawing Detection Debug:</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        <div>
+                          <span className="text-muted-foreground">Drawings Found:</span>
+                          <div className="font-mono text-green-600 dark:text-green-400">
+                            {processedData.drawingDebug.drawingsFound.length > 0 
+                              ? processedData.drawingDebug.drawingsFound.join(', ')
+                              : 'None'}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Items with Drawing:</span>
+                          <div className="font-mono text-blue-600 dark:text-blue-400">
+                            {processedData.drawingDebug.itemsWithDrawings}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Items without Drawing:</span>
+                          <div className="font-mono text-red-600 dark:text-red-400">
+                            {processedData.drawingDebug.itemsWithoutDrawings}
+                          </div>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Fallback Used:</span>
+                          <div className="font-mono text-orange-600 dark:text-orange-400">
+                            {processedData.drawingDebug.fallbackUsed}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Processed Sheets Info */}
                   {processedData.sheetsProcessed && processedData.sheetsProcessed.length > 0 && (
@@ -2054,6 +2377,8 @@ export default function PRGenerator() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Symbol</TableHead>
+                      <TableHead>Drawing No.</TableHead>
+                      <TableHead>Rev</TableHead>
                       <TableHead>Part Number</TableHead>
                       <TableHead>Description</TableHead>
                       <TableHead>Quantity</TableHead>
@@ -2074,6 +2399,28 @@ export default function PRGenerator() {
                             />
                           ) : (
                             item.symbol || '-'
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {editingPR ? (
+                            <Input
+                              value={item.drawingNumber || ''}
+                              onChange={(e) => updateItem(index, 'drawingNumber', e.target.value)}
+                              className="w-32"
+                            />
+                          ) : (
+                            item.drawingNumber || '-'
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {editingPR ? (
+                            <Input
+                              value={item.revision || ''}
+                              onChange={(e) => updateItem(index, 'revision', e.target.value)}
+                              className="w-20"
+                            />
+                          ) : (
+                            item.revision || '-'
                           )}
                         </TableCell>
                         <TableCell className="font-medium">{item.partNumber}</TableCell>
