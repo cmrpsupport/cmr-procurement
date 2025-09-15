@@ -125,8 +125,62 @@ const splitMultiPagePDF = (fullText: string, originalFileName: string, fileSize:
   return documents;
 };
 
+// Helper function to add spacing to concatenated OCR text
+const addSpacingToText = (text: string): string => {
+  console.log("\n=== ADDING SPACING TO OCR TEXT ===");
+  console.log("Original text length:", text.length);
+  console.log("First 200 chars:", text.substring(0, 200));
+  
+  let spacedText = text;
+  
+  // Add spaces before capital letters that follow lowercase letters or numbers
+  spacedText = spacedText.replace(/([a-z0-9])([A-Z])/g, '$1 $2');
+  
+  // Add spaces before numbers that follow letters
+  spacedText = spacedText.replace(/([a-zA-Z])(\d)/g, '$1 $2');
+  
+  // Add spaces after numbers that are followed by letters
+  spacedText = spacedText.replace(/(\d)([a-zA-Z])/g, '$1 $2');
+  
+  // Add spaces around specific patterns
+  spacedText = spacedText.replace(/([a-z])(Ltd|Inc|Corp|Co|PTE)/gi, '$1 $2');
+  spacedText = spacedText.replace(/(Electronic|Systems|Enterprise|Supply|Industrial)(Pte|Ltd|Inc|Corp)/gi, '$1 $2');
+  
+  // Add spaces before common address/contact patterns
+  spacedText = spacedText.replace(/([a-z])(Tel|Fax|Email|Website|Singapore|Road|Street|Drive|Crescent)([^a-z])/gi, '$1 $2$3');
+  
+  // Add spaces around colons for field labels
+  spacedText = spacedText.replace(/([a-zA-Z]):([a-zA-Z0-9])/g, '$1: $2');
+  
+  // Add spaces after periods in abbreviations
+  spacedText = spacedText.replace(/([A-Z])\.([A-Z])/g, '$1. $2');
+  
+  // Fix specific concatenated patterns from your OCR
+  spacedText = spacedText.replace(/WAGOElectronicPteLtd/gi, 'WAGO Electronic Pte Ltd');
+  spacedText = spacedText.replace(/SENOCONIXPteLtd/gi, 'SENCONIX Pte Ltd');
+  spacedText = spacedText.replace(/SCLSystemEnterprisePteLtd/gi, 'SCL System Enterprise Pte Ltd');
+  spacedText = spacedText.replace(/WAHLEIIndustrialSupplyCo/gi, 'WAH LEI Industrial Supply Co');
+  spacedText = spacedText.replace(/Yourorderno\./gi, 'Your order no.');
+  spacedText = spacedText.replace(/DeliveryOrder/gi, 'Delivery Order');
+  
+  // Clean up multiple spaces
+  spacedText = spacedText.replace(/\s{2,}/g, ' ');
+  
+  console.log("After spacing - length:", spacedText.length);
+  console.log("After spacing - first 200 chars:", spacedText.substring(0, 200));
+  console.log("=== SPACING COMPLETE ===\n");
+  
+  return spacedText;
+};
+
 // Helper function to correct common OCR mistakes
 const correctOCRText = (text: string): string => {
+  console.log("\n=== OCR TEXT CORRECTION STARTING ===");
+  console.log("Original text length:", text.length);
+  console.log("First 500 chars:", text.substring(0, 500));
+  
+  // First add spacing to concatenated text
+  text = addSpacingToText(text);
   const corrections: [RegExp, string][] = [
     // Common OCR misreadings
     [/SEAMP/gi, 'STAMP'],
@@ -320,12 +374,16 @@ const extractDataFromText = (text: string) => {
       }
     }
 
-    // Extract PO Number with comprehensive patterns (prioritize specific patterns first)
+    // Extract PO Number with patterns specific to your OCR output
     const poPatterns = [
-      // Prioritize specific delivery order patterns first
-      /your\s+order\s+no\.?\s*:?\s*([a-zA-Z0-9\-_\/]{3,20})/i,
-      /your\s+po\s+no\.?\s*:?\s*([a-zA-Z0-9\-_\/]{3,20})/i,
-      /order\s+no\.?\s*:?\s*([a-zA-Z0-9\-_\/]{3,20})/i,
+      // Direct PO patterns from the OCR text we see
+      /Your\s*order\s*no\.?\s*:?\s*(PO\d+)/i, // "Your order no.: PO55903"
+      /Your\s*PO\s*No\s*:?\s*(P[O0]\d+)/i, // "Your PO No: PO55918" (SENCONIX)
+      /P\/O\s*REF\s*:?\s*(PO\d+)/i, // "P/O REF: PO55910" (WAH LEI)
+      /YOUR\s*PO\s*NO\.?\s*:?\s*(PO\d+)/i, // "YOUR PO NO.: PO55922" (SCL)
+      /your\s*order\s*no\.?\s*:?\s*([a-zA-Z0-9\-_\/]{3,20})/i,
+      /your\s*po\s*no\.?\s*:?\s*([a-zA-Z0-9\-_\/]{3,20})/i,
+      /order\s*no\.?\s*:?\s*([a-zA-Z0-9\-_\/]{3,20})/i,
       // Look for standalone PO patterns
       /\b(PO\d{4,10})\b/i,
       /\b(po\d{4,10})\b/i,
@@ -352,16 +410,28 @@ const extractDataFromText = (text: string) => {
       if (match && match[1]) {
         let poNumber = match[1].trim();
         console.log(`Raw PO match: "${poNumber}"`);
+        
+        // Clean up OCR artifacts in PO number
+        poNumber = poNumber.replace(/\s+/g, ''); // Remove all spaces
+        poNumber = poNumber.replace(/[O]/g, '0'); // Replace O with 0
+        poNumber = poNumber.replace(/[Il]/g, '1'); // Replace I,l with 1
+        poNumber = poNumber.replace(/[^a-zA-Z0-9\-_\/]/g, ''); // Remove other artifacts
+        
+        console.log(`Cleaned PO: "${poNumber}"`);
+        
         // Validate that it looks like a reasonable PO number
         const isValidFormat = /^[a-zA-Z0-9\-_\/]+$/.test(poNumber);
-        const isValidLength = poNumber.length >= 3 && poNumber.length <= 20;
-        console.log(`PO validation - Length: ${poNumber.length}, Format valid: ${isValidFormat}, Length valid: ${isValidLength}`);
-        if (isValidLength && isValidFormat) {
+        const isValidLength = poNumber.length >= 2 && poNumber.length <= 25;
+        const hasNumbers = /\d/.test(poNumber); // Must contain at least one number
+        
+        console.log(`PO validation - Length: ${poNumber.length}, Format valid: ${isValidFormat}, Length valid: ${isValidLength}, Has numbers: ${hasNumbers}`);
+        
+        if (isValidLength && isValidFormat && hasNumbers) {
           console.log(`✅ PO NUMBER FOUND: "${poNumber}" using pattern ${i+1}`);
           extractedData.poNumber = poNumber;
           break;
         } else {
-          console.log(`❌ PO rejected - length: ${poNumber.length}, format valid: ${isValidFormat}`);
+          console.log(`❌ PO rejected - length: ${poNumber.length}, format: ${isValidFormat}, has numbers: ${hasNumbers}`);
         }
       } else {
         console.log(`❌ No match for PO pattern ${i+1}`);

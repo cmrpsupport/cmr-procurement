@@ -145,7 +145,37 @@ export default function DocumentAssistant() {
     }
   };
 
-  // PDF processing function with detailed progress tracking
+  // Enhanced image preprocessing for better OCR quality
+  const enhanceImageForOCR = (canvas: HTMLCanvasElement, context: CanvasRenderingContext2D): HTMLCanvasElement => {
+    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+
+    // Apply image enhancements
+    for (let i = 0; i < data.length; i += 4) {
+      // Convert to grayscale for better OCR performance
+      const gray = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
+      
+      // Apply contrast enhancement
+      const enhanced = Math.round(((gray / 255 - 0.5) * 1.5 + 0.5) * 255);
+      const finalValue = Math.max(0, Math.min(255, enhanced));
+      
+      // Apply slight sharpening by increasing contrast between light and dark areas
+      const threshold = 128;
+      const adjustedValue = finalValue > threshold ? 
+        Math.min(255, finalValue + 20) : 
+        Math.max(0, finalValue - 15);
+      
+      data[i] = adjustedValue;     // Red
+      data[i + 1] = adjustedValue; // Green
+      data[i + 2] = adjustedValue; // Blue
+      // Alpha remains unchanged
+    }
+
+    context.putImageData(imageData, 0, 0);
+    return canvas;
+  };
+
+  // PDF processing function with detailed progress tracking and enhanced OCR
   const processPDFWithTesseract = async (file: File): Promise<string> => {
     try {
       const startTime = Date.now();
@@ -157,9 +187,9 @@ export default function DocumentAssistant() {
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       let combinedText = '';
 
-      console.log(`Starting PDF processing for ${pdf.numPages} pages...`);
+      console.log(`Starting enhanced PDF processing for ${pdf.numPages} pages...`);
       setTotalPages(pdf.numPages);
-      setProcessingStage("Processing PDF pages with OCR...");
+      setProcessingStage("Processing PDF pages with enhanced OCR...");
 
       // Process each page of the PDF
       for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
@@ -167,35 +197,84 @@ export default function DocumentAssistant() {
         updateProgress(pageNum - 0.5, pdf.numPages, `Processing page ${pageNum} of ${pdf.numPages}...`, startTime);
         
         const page = await pdf.getPage(pageNum);
-        const viewport = page.getViewport({ scale: 2.0 });
+        // Use higher scale for better OCR quality (3.0 instead of 2.0)
+        const viewport = page.getViewport({ scale: 3.0 });
         
-        // Create canvas to render PDF page
+        // Create high-resolution canvas for better OCR
         const canvas = document.createElement('canvas');
         const context = canvas.getContext('2d');
+        if (!context) {
+          throw new Error('Could not create canvas context');
+        }
+        
         canvas.height = viewport.height;
         canvas.width = viewport.width;
+        
+        // Enable image smoothing for better rendering quality
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = 'high';
 
-        // Render PDF page to canvas
+        // Render PDF page to canvas with white background
+        context.fillStyle = 'white';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        
         await page.render({
-          canvasContext: context!,
+          canvasContext: context,
           viewport: viewport
         }).promise;
 
-        // Convert canvas to blob for Tesseract OCR
+        // Enhance image for better OCR
+        updateProgress(pageNum - 0.4, pdf.numPages, `Enhancing image quality for page ${pageNum}...`, startTime);
+        const enhancedCanvas = enhanceImageForOCR(canvas, context);
+
+        // Convert enhanced canvas to blob
         const blob = await new Promise<Blob>((resolve) => {
-          canvas.toBlob((blob) => resolve(blob!), 'image/png');
+          enhancedCanvas.toBlob((blob) => resolve(blob!), 'image/png', 1.0);
         });
 
-        // Use Tesseract.js directly in the client for each page
+        // Use Tesseract.js with enhanced configuration
         try {
-          updateProgress(pageNum - 0.5, pdf.numPages, `OCR scanning page ${pageNum}...`, startTime);
+          updateProgress(pageNum - 0.3, pdf.numPages, `OCR scanning page ${pageNum} with enhanced settings...`, startTime);
           
           const { createWorker } = await import('tesseract.js');
-          const worker = await createWorker('eng');
+          const worker = await createWorker('eng', 1, {
+            logger: m => {
+              if (m.status && m.progress !== undefined) {
+                console.log(`Tesseract page ${pageNum}: ${m.status} - ${Math.round(m.progress * 100)}%`);
+              }
+            }
+          });
           
-          updateProgress(pageNum - 0.3, pdf.numPages, `OCR processing page ${pageNum}...`, startTime);
+          // Configure Tesseract for better document OCR
+          await worker.setParameters({
+            tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.,;:()[]{}+-*/%$#@!?&\'"\n\r\t\-_/',
+            tessedit_pageseg_mode: '1', // Automatic page segmentation with OSD
+            tessedit_ocr_engine_mode: '1', // LSTM OCR engine mode  
+            preserve_interword_spaces: '1',
+            user_defined_dpi: '300' // Set high DPI for better recognition
+          });
           
-          const { data: { text } } = await worker.recognize(blob);
+          updateProgress(pageNum - 0.1, pdf.numPages, `OCR processing page ${pageNum} with enhanced recognition...`, startTime);
+          
+          const { data: { text, confidence } } = await worker.recognize(blob);
+          
+          console.log(`\n=== PAGE ${pageNum} OCR RESULTS ===`);
+          console.log(`Confidence: ${confidence}%`);
+          console.log(`Text length: ${text.length} characters`);
+          console.log(`\n--- COMPLETE RAW OCR TEXT ---`);
+          console.log(text);
+          console.log(`--- END COMPLETE RAW TEXT ---\n`);
+          console.log(`First 200 characters:`, text.substring(0, 200));
+          console.log(`Raw text contains 'PO'?: ${text.toLowerCase().includes('po')}`);
+          console.log(`Raw text contains 'delivery'?: ${text.toLowerCase().includes('delivery')}`);
+          console.log(`Raw text contains 'order'?: ${text.toLowerCase().includes('order')}`);
+          console.log(`Raw text contains company names?: ${/wago|senconix|electronic/i.test(text)}`);
+          console.log(`Lines in text: ${text.split('\n').length}`);
+          console.log(`First 5 lines:`);
+          text.split('\n').slice(0, 5).forEach((line, i) => {
+            console.log(`  Line ${i+1}: "${line}"`);
+          });
+          console.log(`=== END PAGE ${pageNum} RESULTS ===\n`);
           
           await worker.terminate();
           
@@ -205,8 +284,8 @@ export default function DocumentAssistant() {
           }
           combinedText += text;
           
-          updateProgress(pageNum, pdf.numPages, `Completed page ${pageNum} of ${pdf.numPages}`, startTime);
-          console.log(`Page ${pageNum} processed: ${text.length} characters`);
+          updateProgress(pageNum, pdf.numPages, `Completed page ${pageNum} of ${pdf.numPages} (${confidence?.toFixed(1)}% confidence)`, startTime);
+          console.log(`Page ${pageNum} processed: ${text.length} characters, confidence: ${confidence}%`);
         } catch (tesseractError) {
           console.error(`Error processing page ${pageNum}:`, tesseractError);
           updateProgress(pageNum, pdf.numPages, `Error on page ${pageNum}, continuing...`, startTime);
@@ -218,7 +297,30 @@ export default function DocumentAssistant() {
       setProcessingProgress(100);
       setEstimatedTimeRemaining("Complete!");
       
-      console.log(`PDF processing completed. Total text: ${combinedText.length} characters`);
+      console.log(`\n=== FINAL COMBINED PDF TEXT ===`);
+      console.log(`Total text length: ${combinedText.length} characters`);
+      console.log(`\n--- COMPLETE FINAL TEXT ---`);
+      console.log(combinedText);
+      console.log(`--- END COMPLETE FINAL TEXT ---\n`);
+      console.log(`=== END FINAL PDF TEXT ===`);
+      
+      // Create downloadable OCR text file for debugging
+      try {
+        const blob = new Blob([combinedText], { type: 'text/plain' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `OCR_Debug_${file.name}_${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        console.log('📁 OCR debug text file downloaded for analysis');
+      } catch (debugError) {
+        console.log('Could not create debug file:', debugError);
+      }
+      
       return combinedText;
     } catch (error) {
       console.error('PDF processing error:', error);
@@ -334,6 +436,15 @@ export default function DocumentAssistant() {
             console.log("Extracting text from PDF pages...");
             const extractedText = await processPDFWithTesseract(file);
             console.log(`Text extracted: ${extractedText.length} characters`);
+            
+            // Show a preview of what will be sent to server for extraction
+            console.log(`\n=== SENDING TO SERVER FOR EXTRACTION ===`);
+            console.log(`File: ${file.name}`);
+            console.log(`Page count: ${pageCount}`);
+            console.log(`Text preview (first 500 chars):`, extractedText.substring(0, 500));
+            console.log(`Text contains PO numbers?: ${/PO\d+|P\.O\.|purchase.*order|order.*no/i.test(extractedText)}`);
+            console.log(`Text contains suppliers?: ${/electronic|pte ltd|company|supplier/i.test(extractedText)}`);
+            console.log(`=== END SERVER PREVIEW ===\n`);
             
             // Send the original PDF file along with the extracted text
             const formData = new FormData();

@@ -28,6 +28,7 @@ import { useState, useRef, useEffect } from "react";
 import * as XLSX from 'xlsx';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+import * as pdfjsLib from 'pdfjs-dist';
 
 interface BOMItem {
   partNumber: string;
@@ -118,20 +119,21 @@ export default function PRGenerator() {
   }, []);
 
   const handleFileSelect = (file: File) => {
-    // Check file type - only Excel and CSV allowed per acceptance criteria
+    // Check file type - Excel, CSV, and PDF formats supported
     const allowedTypes = [
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
       'application/vnd.ms-excel', // .xls
       'application/vnd.ms-excel.sheet.binary.macroenabled.12', // .xlsb
-      'text/csv' // .csv
+      'text/csv', // .csv
+      'application/pdf' // .pdf
     ];
 
     const fileName = file.name.toLowerCase();
-    const allowedExtensions = ['.xlsx', '.xls', '.xlsb', '.csv'];
+    const allowedExtensions = ['.xlsx', '.xls', '.xlsb', '.csv', '.pdf'];
     const hasValidExtension = allowedExtensions.some(ext => fileName.endsWith(ext));
 
     if (!allowedTypes.includes(file.type) && !hasValidExtension) {
-      setUploadError("Invalid file format. Please upload an Excel (.xlsx, .xls, .xlsb) or CSV file.");
+      setUploadError("Invalid file format. Please upload an Excel (.xlsx, .xls, .xlsb), CSV, or PDF file.");
       return;
     }
 
@@ -185,6 +187,56 @@ export default function PRGenerator() {
     }
   };
 
+  // Configure PDF.js worker
+  useEffect(() => {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+  }, []);
+
+  // PDF table extraction function
+  const extractTablesFromPDF = async (fileBuffer: ArrayBuffer): Promise<any[][]> => {
+    const pdf = await pdfjsLib.getDocument({ data: fileBuffer }).promise;
+    const allRows: any[][] = [];
+
+    for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+      const page = await pdf.getPage(pageNum);
+      const textContent = await page.getTextContent();
+
+      // Group text items by their Y position (rows)
+      const rowMap = new Map<number, any[]>();
+
+      textContent.items.forEach((item: any) => {
+        if (item.str.trim()) {
+          const y = Math.round(item.transform[5]); // Y coordinate
+          const x = Math.round(item.transform[4]); // X coordinate
+
+          if (!rowMap.has(y)) {
+            rowMap.set(y, []);
+          }
+          rowMap.get(y)!.push({
+            text: item.str.trim(),
+            x: x
+          });
+        }
+      });
+
+      // Sort rows by Y coordinate (top to bottom)
+      const sortedYs = Array.from(rowMap.keys()).sort((a, b) => b - a);
+
+      // Convert to 2D array, sorting items within each row by X coordinate
+      sortedYs.forEach(y => {
+        const rowItems = rowMap.get(y)!.sort((a, b) => a.x - b.x);
+        const rowTexts = rowItems.map(item => item.text);
+
+        // Only add rows that have multiple columns (likely table data)
+        if (rowTexts.length > 1) {
+          allRows.push(rowTexts);
+        }
+      });
+    }
+
+    return allRows;
+  };
+
   const processBOMFile = async () => {
     if (!selectedFile) return;
 
@@ -194,7 +246,34 @@ export default function PRGenerator() {
 
           try {
         const data = await selectedFile.arrayBuffer();
-        const workbook = XLSX.read(data, { type: 'array' });
+
+        let workbook: any;
+        let jsonDataArray: any[][][] = [];
+
+        // Handle different file types
+        if (selectedFile.name.toLowerCase().endsWith('.pdf')) {
+          // Process PDF
+          const pdfRows = await extractTablesFromPDF(data);
+
+          // Create a mock workbook structure for PDF data
+          workbook = {
+            SheetNames: ['PDF_BOM'],
+            Sheets: {
+              'PDF_BOM': {} // Placeholder, we'll use jsonDataArray directly
+            }
+          };
+
+          jsonDataArray = [pdfRows];
+        } else {
+          // Process Excel/CSV files as before
+          workbook = XLSX.read(data, { type: 'array' });
+
+          // Convert each sheet to JSON data
+          jsonDataArray = workbook.SheetNames.map(sheetName => {
+            const worksheet = workbook.Sheets[sheetName];
+            return XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+          });
+        }
         
         console.log('Available sheets:', workbook.SheetNames);
         
@@ -206,7 +285,7 @@ export default function PRGenerator() {
             if (!row || row.length === 0) continue;
             
             const rowHeaders = row.map(cell => cell?.toString() || '');
-            const hasMaker = rowHeaders.some(h => h.toLowerCase().includes('maker') || h.toLowerCase().includes('supplier'));
+            const hasMaker = rowHeaders.some(h => h.toLowerCase().includes('maker') || h.toLowerCase().includes('make') || h.toLowerCase().includes('supplier'));
             const hasPartNumber = rowHeaders.some(h => h.toLowerCase().includes('model') || h.toLowerCase().includes('part'));
             
             console.log(`Checking row ${rowIdx + 1}:`, {
@@ -257,16 +336,16 @@ export default function PRGenerator() {
         }> = [];
         
         // Check all sheets for BOM format
-        for (const sheetName of workbook.SheetNames) {
-          const worksheet = workbook.Sheets[sheetName];
-          const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+        for (let i = 0; i < workbook.SheetNames.length; i++) {
+          const sheetName = workbook.SheetNames[i];
+          const jsonData = jsonDataArray[i];
           const headerInfo = findHeaderRowInSheet(jsonData);
-          
+
           if (headerInfo) {
             console.log(`Found BOM format in sheet "${sheetName}"`);
             validSheets.push({
               sheetName,
-              worksheet,
+              worksheet: workbook.Sheets[sheetName],
               jsonData,
               headerInfo
             });
@@ -276,7 +355,7 @@ export default function PRGenerator() {
         }
         
         if (validSheets.length === 0) {
-          throw new Error(`No BOM format found in any sheet. Looking for headers containing 'Maker' and 'Model/Part No.' columns. Available sheets: ${workbook.SheetNames.join(', ')}`);
+          throw new Error(`No BOM format found in any sheet. Looking for headers containing 'Maker/Make/Supplier' and 'Model/Part No.' columns. Available sheets: ${workbook.SheetNames.join(', ')}`);
         }
         
         console.log(`Processing ${validSheets.length} sheets with BOM data:`, validSheets.map(s => s.sheetName));
@@ -389,10 +468,10 @@ export default function PRGenerator() {
 
         // First pass: collect all drawing numbers from all sheets
         const allDrawingNumbers: { [sheetName: string]: { drawingNumber?: string, revision?: string } } = {};
-        
-        for (const sheetName of workbook.SheetNames) {
-          const worksheet = workbook.Sheets[sheetName];
-          const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 }) as any[][];
+
+        for (let i = 0; i < workbook.SheetNames.length; i++) {
+          const sheetName = workbook.SheetNames[i];
+          const jsonData = jsonDataArray[i];
           const drawingInfo = detectDrawingInfo(jsonData);
           allDrawingNumbers[sheetName] = drawingInfo;
         }
@@ -476,7 +555,7 @@ export default function PRGenerator() {
           const qtyCol = findColumnIndex(['qty', ' qty', 'quantity', 'amount']);
           const symbolCol = findColumnIndex(['symbol', 'tag', 'reference']);
           const descriptionCol = findColumnIndex(['description', 'desc', 'name']);
-          const makerCol = findColumnIndex(['maker', 'supplier', 'vendor', 'manufacturer']);
+          const makerCol = findColumnIndex(['maker', 'make', 'supplier', 'vendor', 'manufacturer']);
           console.log('Maker column detection:', {
             headers: headers,
             makerCol: makerCol,
@@ -495,7 +574,7 @@ export default function PRGenerator() {
           });
 
           if (makerCol === -1 || partNumberCol === -1) {
-            console.log(`Sheet "${sheetName}" missing required columns. Need 'Maker' and 'Model / Part No.' columns. Found: ${headers.join(', ')}`);
+            console.log(`Sheet "${sheetName}" missing required columns. Need 'Maker/Make/Supplier' and 'Model / Part No.' columns. Found: ${headers.join(', ')}`);
             continue;
           }
 
@@ -752,7 +831,10 @@ export default function PRGenerator() {
           Check the browser console for detailed debugging information.`);
         }
 
-      const processingTime = ((Date.now() - startTime) / 1000).toFixed(1);
+      const processingTimeSeconds = (Date.now() - startTime) / 1000;
+      const processingTime = processingTimeSeconds < 1
+        ? `${(processingTimeSeconds * 1000).toFixed(0)}ms`
+        : `${processingTimeSeconds.toFixed(1)}s`;
 
       // Try to save BOM file to database, but continue if it fails
       let bomFileId = `local-${Date.now()}`;
@@ -768,7 +850,7 @@ export default function PRGenerator() {
           fileSize: selectedFile.size,
           totalItems,
           suppliersFound: Object.keys(itemsGrouped).length,
-          processingTime: `${processingTime} seconds`
+          processingTime: processingTime
         })
       });
 
@@ -802,7 +884,7 @@ export default function PRGenerator() {
         suppliersFound: Object.keys(itemsGrouped).length,
         itemsGrouped,
         supplierItems,
-        processingTime: `${processingTime} seconds`,
+        processingTime: processingTime,
         status: "success",
         fileName: selectedFile.name,
         fileSize: (selectedFile.size / 1024).toFixed(1) + ' KB',
@@ -1473,7 +1555,7 @@ export default function PRGenerator() {
       const pdfBytes = await pdfDoc.save();
       
       // Create download
-      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const blob = new Blob([pdfBytes.buffer], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
@@ -1667,7 +1749,7 @@ export default function PRGenerator() {
                       ref={fileInputRef}
                       type="file"
                       className="hidden"
-                      accept=".xlsx,.xls,.xlsb,.csv"
+                      accept=".xlsx,.xls,.xlsb,.csv,.pdf"
                       onChange={handleFileInputChange}
                     />
 
@@ -1717,7 +1799,7 @@ export default function PRGenerator() {
                           <Button onClick={() => fileInputRef.current?.click()}>
                             Choose File
                           </Button>
-                                                       <p className="text-xs text-muted-foreground mt-2">Supports Excel (.xlsx, .xls, .xlsb) and CSV files</p>
+                                                       <p className="text-xs text-muted-foreground mt-2">Supports Excel (.xlsx, .xls, .xlsb), CSV, and PDF files</p>
                         </div>
                       </div>
                     )}
@@ -1732,10 +1814,14 @@ export default function PRGenerator() {
                     </div>
                   )}
 
-                  <div className="mt-6">
+                  <div className="mt-6 space-y-3">
                     <div className="flex items-center space-x-2 text-sm text-muted-foreground">
                       <AlertCircle className="w-4 h-4" />
                       <span>Make sure your BOM includes columns for: Qty, Symbol, Description, Maker, Model/Part No., and Remarks</span>
+                    </div>
+                    <div className="flex items-center space-x-2 text-sm text-muted-foreground">
+                      <AlertCircle className="w-4 h-4" />
+                      <span>For PDF files: Ensure the BOM is in a clear table format with proper column alignment</span>
                     </div>
                   </div>
                 </CardContent>
