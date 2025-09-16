@@ -192,10 +192,10 @@ export default function PRGenerator() {
     pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
   }, []);
 
-  // PDF table extraction function
-  const extractTablesFromPDF = async (fileBuffer: ArrayBuffer): Promise<any[][]> => {
+  // PDF table extraction function - now returns pages separately
+  const extractTablesFromPDF = async (fileBuffer: ArrayBuffer): Promise<{ pageData: any[][][], totalPages: number }> => {
     const pdf = await pdfjsLib.getDocument({ data: fileBuffer }).promise;
-    const allRows: any[][] = [];
+    const pageData: any[][][] = [];
 
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
@@ -223,18 +223,21 @@ export default function PRGenerator() {
       const sortedYs = Array.from(rowMap.keys()).sort((a, b) => b - a);
 
       // Convert to 2D array, sorting items within each row by X coordinate
+      const pageRows: any[][] = [];
       sortedYs.forEach(y => {
         const rowItems = rowMap.get(y)!.sort((a, b) => a.x - b.x);
         const rowTexts = rowItems.map(item => item.text);
 
         // Only add rows that have multiple columns (likely table data)
         if (rowTexts.length > 1) {
-          allRows.push(rowTexts);
+          pageRows.push(rowTexts);
         }
       });
+
+      pageData.push(pageRows);
     }
 
-    return allRows;
+    return { pageData, totalPages: pdf.numPages };
   };
 
   const processBOMFile = async () => {
@@ -253,17 +256,21 @@ export default function PRGenerator() {
         // Handle different file types
         if (selectedFile.name.toLowerCase().endsWith('.pdf')) {
           // Process PDF
-          const pdfRows = await extractTablesFromPDF(data);
+          const pdfResult = await extractTablesFromPDF(data);
 
-          // Create a mock workbook structure for PDF data
+          // Create a mock workbook structure for PDF data with separate pages
+          const sheetNames = pdfResult.pageData.map((_, index) => `PDF_Page_${index + 1}`);
           workbook = {
-            SheetNames: ['PDF_BOM'],
-            Sheets: {
-              'PDF_BOM': {} // Placeholder, we'll use jsonDataArray directly
-            }
+            SheetNames: sheetNames,
+            Sheets: {}
           };
 
-          jsonDataArray = [pdfRows];
+          // Create sheet placeholders and data array
+          sheetNames.forEach(sheetName => {
+            workbook.Sheets[sheetName] = {}; // Placeholder
+          });
+
+          jsonDataArray = pdfResult.pageData;
         } else {
           // Process Excel/CSV files as before
           workbook = XLSX.read(data, { type: 'array' });
@@ -367,102 +374,165 @@ export default function PRGenerator() {
           for (let i = jsonData.length - 1; i >= 0; i--) {
             const row = jsonData[i];
             if (!row || row.length === 0) continue;
-            
+
             const rowText = row.map(cell => cell ? cell.toString().toLowerCase() : '').join(' ');
             const looksBOMData = /\b(phoenix|bender|schneider|wago|idec)\b/i.test(rowText) ||
                                 /\b\d+\s*(pcs?|ea|each|qty)\b/i.test(rowText) ||
                                 /^[0-9]+\s/.test(rowText.trim());
-            
+
             if (looksBOMData) {
               lastBOMRow = i;
               break;
             }
           }
-          
-          // Search for footer after last BOM data
-          const startSearchFrom = lastBOMRow + 1;
-          let validFooterRow = -1;
-          let docNoCol = -1;
-          let revisionCol = -1;
-          
-          for (let i = startSearchFrom; i < jsonData.length; i++) {
-            const row = jsonData[i];
-            if (!row || row.length === 0) continue;
-            
-            const rowText = row.map(cell => cell ? cell.toString().toLowerCase() : '').join(' ');
-            
-            // Skip rows that look like BOM data
-            const looksBOMData = /\b(phoenix|bender|schneider|wago|idec)\b/i.test(rowText) ||
-                                /\b\d+\s*(pcs?|ea|each|qty)\b/i.test(rowText) ||
-                                /^[0-9]+\s/.test(rowText.trim());
-            
-            if (looksBOMData) continue;
-            
-            // Check for footer structure
-            const hasDocumentTitle = rowText.includes('document title');
-            const hasDocNo = rowText.includes('doc') && rowText.includes('no');
-            const hasRevision = rowText.includes('revision');
-            
-            if (hasDocumentTitle && hasDocNo && hasRevision) {
-              validFooterRow = i;
-              
-              // Find column positions
-              for (let j = 0; j < row.length; j++) {
-                const cell = row[j];
-                if (!cell) continue;
-                
-                const cellStr = cell.toString().toLowerCase().trim();
-                if (cellStr.includes('doc') && cellStr.includes('no')) {
-                  docNoCol = j;
-                }
-                if (cellStr.includes('revision')) {
-                  revisionCol = j;
-                }
-              }
-              break;
-            }
-          }
-          
-          if (validFooterRow === -1) return {};
-          
-          // Get data from next row
-          const dataRowIndex = validFooterRow + 1;
-          if (dataRowIndex >= jsonData.length) return {};
-          
-          const dataRow = jsonData[dataRowIndex];
+
+          // Search for drawing number in the entire document
           let drawingNumber: string | undefined;
           let revision: string | undefined;
-          
-          // Extract drawing number
-          if (docNoCol >= 0 && docNoCol < dataRow.length && dataRow[docNoCol]) {
-            const docValue = dataRow[docNoCol].toString().trim();
-            
+
+          // Method 1: Look for standalone "SUBCONTRACTOR DOCUMENT NUMBER:" label
+          for (let i = 0; i < jsonData.length; i++) {
+            const row = jsonData[i];
+            if (!row || row.length === 0) continue;
+
+            // Check if any cell contains the subcontractor document number label
+            for (let j = 0; j < row.length; j++) {
+              const cell = row[j];
+              if (!cell) continue;
+
+              const cellStr = cell.toString().trim();
+
+              // Check for "SUBCONTRACTOR DOCUMENT NUMBER:" (case insensitive)
+              if (/subcontractor\s+document\s+number\s*:/i.test(cellStr)) {
+                // Look for the drawing number in subsequent rows/cells
+                // First check same row, other columns
+                for (let k = j + 1; k < row.length; k++) {
+                  if (row[k]) {
+                    const candidateValue = row[k].toString().trim();
+                    if (isValidDrawingNumber(candidateValue)) {
+                      drawingNumber = candidateValue;
+                      break;
+                    }
+                  }
+                }
+
+                // If not found in same row, check next few rows
+                if (!drawingNumber) {
+                  for (let nextRowIdx = i + 1; nextRowIdx < Math.min(i + 5, jsonData.length); nextRowIdx++) {
+                    const nextRow = jsonData[nextRowIdx];
+                    if (!nextRow) continue;
+
+                    for (let cellIdx = 0; cellIdx < nextRow.length; cellIdx++) {
+                      if (nextRow[cellIdx]) {
+                        const candidateValue = nextRow[cellIdx].toString().trim();
+                        if (isValidDrawingNumber(candidateValue)) {
+                          drawingNumber = candidateValue;
+                          break;
+                        }
+                      }
+                    }
+                    if (drawingNumber) break;
+                  }
+                }
+
+                if (drawingNumber) break;
+              }
+            }
+            if (drawingNumber) break;
+          }
+
+          // Method 2: Traditional footer structure (fallback)
+          if (!drawingNumber) {
+            const startSearchFrom = lastBOMRow + 1;
+            let validFooterRow = -1;
+            let docNoCol = -1;
+            let revisionCol = -1;
+
+            for (let i = startSearchFrom; i < jsonData.length; i++) {
+              const row = jsonData[i];
+              if (!row || row.length === 0) continue;
+
+              const rowText = row.map(cell => cell ? cell.toString().toLowerCase() : '').join(' ');
+
+              // Skip rows that look like BOM data
+              const looksBOMData = /\b(phoenix|bender|schneider|wago|idec)\b/i.test(rowText) ||
+                                  /\b\d+\s*(pcs?|ea|each|qty)\b/i.test(rowText) ||
+                                  /^[0-9]+\s/.test(rowText.trim());
+
+              if (looksBOMData) continue;
+
+              // Check for footer structure
+              const hasDocumentTitle = rowText.includes('document title');
+              const hasDocNo = rowText.includes('doc') && rowText.includes('no');
+              const hasSubcontractorDoc = rowText.includes('subcontractor') && rowText.includes('document') && rowText.includes('number');
+              const hasRevision = rowText.includes('revision');
+
+              if (hasDocumentTitle && (hasDocNo || hasSubcontractorDoc) && hasRevision) {
+                validFooterRow = i;
+
+                // Find column positions
+                for (let j = 0; j < row.length; j++) {
+                  const cell = row[j];
+                  if (!cell) continue;
+
+                  const cellStr = cell.toString().toLowerCase().trim();
+                  if ((cellStr.includes('doc') && cellStr.includes('no')) ||
+                      (cellStr.includes('subcontractor') && cellStr.includes('document') && cellStr.includes('number'))) {
+                    docNoCol = j;
+                  }
+                  if (cellStr.includes('revision')) {
+                    revisionCol = j;
+                  }
+                }
+                break;
+              }
+            }
+
+            if (validFooterRow !== -1) {
+              // Get data from next row
+              const dataRowIndex = validFooterRow + 1;
+              if (dataRowIndex < jsonData.length) {
+                const dataRow = jsonData[dataRowIndex];
+
+                // Extract drawing number
+                if (docNoCol >= 0 && docNoCol < dataRow.length && dataRow[docNoCol]) {
+                  const docValue = dataRow[docNoCol].toString().trim();
+                  if (isValidDrawingNumber(docValue)) {
+                    drawingNumber = docValue;
+                  }
+                }
+
+                // Extract revision
+                if (revisionCol >= 0 && revisionCol < dataRow.length && dataRow[revisionCol]) {
+                  const revValue = dataRow[revisionCol].toString().trim();
+                  const revMatch = revValue.match(/(?:REV\.?\s*)?(\d{1,2})/i);
+                  if (revMatch) {
+                    revision = revMatch[1].padStart(2, '0');
+                  }
+                }
+              }
+            }
+          }
+
+          // Helper function to validate drawing number patterns
+          function isValidDrawingNumber(value: string): boolean {
+            if (!value || typeof value !== 'string') return false;
+
+            const trimmedValue = value.trim();
+            if (trimmedValue.length < 5) return false; // Too short
+
             // Try multiple drawing number patterns
             const patterns = [
-              /^\d{5}-\d{3}-\d{2}-\d{2}$/,    // XXXXX-XXX-XX-XX
+              /^\d{5}-\d{3}-\d{2}-\d{2}$/,    // XXXXX-XXX-XX-XX (like 25006-001-04-02)
               /^\d{4,6}-\d{2,4}-\d{2,3}-\d{2}$/, // Variable length
               /^[A-Z0-9]{2,6}-\d{3,4}-\d{2,3}-\d{2}$/, // Alphanumeric start
               /^\d{3,6}-\d{3}-\d{2}-\d{2}$/,   // Shorter start
               /^[A-Z]\d{4}-\d{3}-\d{2}-\d{2}$/ // Letter + numbers
             ];
-            
-            for (const pattern of patterns) {
-              if (pattern.test(docValue)) {
-                drawingNumber = docValue;
-                break;
-              }
-            }
+
+            return patterns.some(pattern => pattern.test(trimmedValue));
           }
-          
-          // Extract revision
-          if (revisionCol >= 0 && revisionCol < dataRow.length && dataRow[revisionCol]) {
-            const revValue = dataRow[revisionCol].toString().trim();
-            const revMatch = revValue.match(/(?:REV\.?\s*)?(\d{1,2})/i);
-            if (revMatch) {
-              revision = revMatch[1].padStart(2, '0');
-            }
-          }
-          
+
           return { drawingNumber, revision };
         };
 
