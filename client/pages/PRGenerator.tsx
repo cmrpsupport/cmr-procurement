@@ -982,6 +982,26 @@ export default function PRGenerator() {
     }
   };
 
+
+  // Helper function to calculate combined totals for items with same part number
+  const calculateCombinedTotals = (items: BOMItem[]) => {
+    const partNumberTotals = new Map<string, number>();
+    const firstOccurrenceIndex = new Map<string, number>();
+
+    // Calculate total quantities for each part number
+    items.forEach((item, index) => {
+      const current = partNumberTotals.get(item.partNumber) || 0;
+      partNumberTotals.set(item.partNumber, current + item.quantity);
+
+      // Record the first occurrence index
+      if (!firstOccurrenceIndex.has(item.partNumber)) {
+        firstOccurrenceIndex.set(item.partNumber, index);
+      }
+    });
+
+    return { partNumberTotals, firstOccurrenceIndex };
+  };
+
   const generatePurchaseRequisitions = async () => {
     if (!processedData) return;
 
@@ -1168,6 +1188,7 @@ export default function PRGenerator() {
 
   const downloadPRPDF = async (pr: PurchaseRequisition) => {
     console.log('Downloading PR as PDF:', pr);
+    console.log('PDF export - PR items count:', pr.items.length);
     setDownloadingPRPDF(pr.id);
     
     try {
@@ -1280,8 +1301,8 @@ export default function PRGenerator() {
           maker: 440,       // Maker - pull back to the left
           modelPart: 500,   // Model/Part No.
           sub: 630,         // Sub (Qty) - keep the good position
-          total: 625,       // Total (Qty) - leave empty
-          unitPrice: 675,   // Unit Price - moved 10 points to the left
+          total: 675,       // Total (Qty) - moved 50 units to the right
+          unitPrice: 715,   // Unit Price - moved 40 units to the right total (30+10)
           dateReq: 750,     // Date Required
           remarks: 810      // Remarks - adjusted to 810 (10 points back from 800)
         };
@@ -1396,7 +1417,7 @@ export default function PRGenerator() {
           }
         };
         
-        // Draw items for this page with simple row spacing
+        // Draw items for this page aligned with existing template grid
         let currentY = tableStartY;
         
         items.forEach((item, index) => {
@@ -1448,7 +1469,7 @@ export default function PRGenerator() {
             1 // Minimum 1 line
           );
           
-          // Calculate proper row height with consistent spacing
+          // Calculate actual row height based on content (restore original logic)
           const baseRowHeight = 20; // Base height for single line items
           const lineSpacing = 16; // Fixed 16pt spacing between lines
           const rowPadding = 8; // Additional padding between rows
@@ -1474,7 +1495,7 @@ export default function PRGenerator() {
               color: rgb(0, 0, 0),
             });
           }
-          
+
           // Revision
           if (item.revision) {
             currentPage.drawText(item.revision, {
@@ -1572,7 +1593,22 @@ export default function PRGenerator() {
             font: font,
             color: rgb(0, 0, 0),
           });
-          
+
+          // Total - show combined total only on first occurrence across ALL items
+          const { partNumberTotals, firstOccurrenceIndex } = calculateCombinedTotals(pr.items);
+          // Use globalIndex which correctly represents the position in the full items array
+          const isFirstOccurrence = firstOccurrenceIndex.get(item.partNumber) === globalIndex;
+          if (isFirstOccurrence) {
+            const totalQuantity = partNumberTotals.get(item.partNumber) || 0;
+            currentPage.drawText(totalQuantity.toString(), {
+              x: columns.total,
+              y: yPos,
+              size: 8,
+              font: font,
+              color: rgb(0, 0, 0),
+            });
+          }
+
           // Unit Price
           currentPage.drawText(`${(item.unitPrice || 0).toFixed(2)}`, {
             x: columns.unitPrice,
@@ -1596,7 +1632,7 @@ export default function PRGenerator() {
               }
             });
           }
-          
+
           // Move to next row - dynamic spacing based on content
           currentY -= actualRowHeight;
         });
@@ -1645,7 +1681,8 @@ export default function PRGenerator() {
   };
 
   const downloadPR = (pr: PurchaseRequisition) => {
-    console.log('Downloading PR:', pr);
+    console.log('Downloading PR (Excel):', pr);
+    console.log('Excel export - PR items count:', pr.items.length);
     setDownloadingPR(pr.id);
     
     try {
@@ -1664,19 +1701,28 @@ export default function PRGenerator() {
         ['Item', 'Drawing No.', 'Rev', 'Description', 'Maker', 'Model / Part No.', 'Sub', 'Total', 'Unit Price', 'Date Required', 'Remarks'],
         
         // Items data with full data (no truncation)
-        ...pr.items.map((item, index) => [
-          index + 1,                    // Item
-          item.drawingNumber || '',     // Drawing No.
-          item.revision || '',          // Rev
-          item.description,            // Description (full text)
-          item.supplier,               // Maker (full text)
-          item.partNumber,             // Model/Part No. (full text)
-          item.quantity,               // Sub (Quantity)
-          '',                          // Total (left empty like PDF)
-          (item.unitPrice || 0).toFixed(2),  // Unit Price
-          '',                          // Date Required
-          item.remarks || ''           // Remarks (full text)
-        ]),
+        ...pr.items.map((item, index) => {
+          const { partNumberTotals, firstOccurrenceIndex } = calculateCombinedTotals(pr.items);
+          const isFirstOccurrence = firstOccurrenceIndex.get(item.partNumber) === index;
+          const totalQuantity = isFirstOccurrence ? (partNumberTotals.get(item.partNumber) || 0) : '';
+
+          if (isFirstOccurrence) {
+          }
+
+          return [
+            index + 1,                    // Item
+            item.drawingNumber || '',     // Drawing No.
+            item.revision || '',          // Rev
+            item.description,            // Description (full text)
+            item.supplier,               // Maker (full text)
+            item.partNumber,             // Model/Part No. (full text)
+            item.quantity,               // Sub (Quantity)
+            totalQuantity,               // Total (combined quantity on first occurrence only)
+            (item.unitPrice || 0).toFixed(2),  // Unit Price
+            '',                          // Date Required
+            item.remarks || ''           // Remarks (full text)
+          ];
+        }),
         
         // Empty row before total
         [],
@@ -2378,7 +2424,7 @@ export default function PRGenerator() {
                       <TableHead>Description</TableHead>
                       <TableHead>Quantity</TableHead>
                       <TableHead>Unit Price</TableHead>
-                      <TableHead>Total Price</TableHead>
+                      <TableHead>Total</TableHead>
                       <TableHead>Remarks</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -2454,7 +2500,14 @@ export default function PRGenerator() {
                             `SGD ${item.unitPrice?.toLocaleString()}`
                           )}
                         </TableCell>
-                        <TableCell>SGD {item.totalPrice?.toLocaleString()}</TableCell>
+                        <TableCell>
+                          {(() => {
+                            const items = (editingPR || selectedPR)!.items;
+                            const { partNumberTotals, firstOccurrenceIndex } = calculateCombinedTotals(items);
+                            const isFirstOccurrence = firstOccurrenceIndex.get(item.partNumber) === index;
+                            return isFirstOccurrence ? partNumberTotals.get(item.partNumber) || 0 : '';
+                          })()}
+                        </TableCell>
                         <TableCell>
                           {editingPR ? (
                             <Input
