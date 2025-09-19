@@ -283,7 +283,16 @@ export default function PRGenerator() {
         }
         
         console.log('Available sheets:', workbook.SheetNames);
-        
+        console.log('Workbook structure:', workbook.Workbook);
+
+        // Log sheet visibility info for debugging
+        if (workbook.Workbook && workbook.Workbook.Sheets) {
+          workbook.Workbook.Sheets.forEach((sheetInfo, index) => {
+            const sheetName = workbook.SheetNames[index];
+            console.log(`Sheet "${sheetName}" - Hidden: ${sheetInfo.Hidden}, Name: ${sheetInfo.name}`);
+          });
+        }
+
         // Function to find header row in a sheet's data
         const findHeaderRowInSheet = (sheetData: any[][]): { headerRow: number, headers: string[] } | null => {
           // Check up to the first 10 rows for headers
@@ -342,9 +351,23 @@ export default function PRGenerator() {
           headerInfo: { headerRow: number, headers: string[] };
         }> = [];
         
-        // Check all sheets for BOM format
+        // Check all sheets for BOM format (skip hidden sheets)
         for (let i = 0; i < workbook.SheetNames.length; i++) {
           const sheetName = workbook.SheetNames[i];
+          const worksheet = workbook.Sheets[sheetName];
+
+          // Skip hidden sheets - check workbook.Workbook.Sheets array for visibility info
+          let isHidden = false;
+          if (workbook.Workbook && workbook.Workbook.Sheets && workbook.Workbook.Sheets[i]) {
+            const sheetInfo = workbook.Workbook.Sheets[i];
+            isHidden = sheetInfo.Hidden === 1 || sheetInfo.Hidden === 2; // Hidden (1) or VeryHidden (2)
+          }
+
+          if (isHidden) {
+            console.log(`Skipping hidden sheet "${sheetName}"`);
+            continue;
+          }
+
           const jsonData = jsonDataArray[i];
           const headerInfo = findHeaderRowInSheet(jsonData);
 
@@ -352,7 +375,7 @@ export default function PRGenerator() {
             console.log(`Found BOM format in sheet "${sheetName}"`);
             validSheets.push({
               sheetName,
-              worksheet: workbook.Sheets[sheetName],
+              worksheet: worksheet,
               jsonData,
               headerInfo
             });

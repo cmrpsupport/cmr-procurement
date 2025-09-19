@@ -55,11 +55,19 @@ const splitMultiPagePDF = (fullText: string, originalFileName: string, fileSize:
   console.log(`Total pages: ${totalPages}, Original filename: ${originalFileName}`);
   
   // Split by page separators
-  const pages = fullText.split(/--- Page \d+ ---/);
+  const pages = fullText.split(/=== PAGE \d+ START ===/);
+  console.log(`Split result: ${pages.length} parts found`);
+  pages.forEach((part, idx) => {
+    console.log(`Part ${idx}: length=${part.length}, first 100 chars="${part.substring(0, 100)}"`);
+  });
   const documents = [];
   
   for (let i = 0; i < pages.length; i++) {
-    const pageText = pages[i].trim();
+    let pageText = pages[i].trim();
+
+    // Clean up page text by removing END markers
+    pageText = pageText.replace(/=== PAGE \d+ END ===/g, '').trim();
+
     if (pageText.length < 50) continue; // Skip very short pages
     
     console.log(`\n--- Processing Page ${i + 1} ---`);
@@ -69,32 +77,83 @@ const splitMultiPagePDF = (fullText: string, originalFileName: string, fileSize:
     // Detect if this page contains a delivery order/invoice
     const isDeliveryDocument = (
       /delivery\s*order/i.test(pageText) ||
+      /d\s*[oO]\s*[\.:]?\s*no/i.test(pageText) ||  // DO number patterns
       /invoice/i.test(pageText) ||
       /delivery/i.test(pageText) ||
       /purchase\s*order/i.test(pageText) ||
-      /quotation/i.test(pageText)
+      /quotation/i.test(pageText) ||
+      /supplier/i.test(pageText) ||  // Pages with supplier info
+      /po\s*number/i.test(pageText) ||  // PO number patterns
+      /order\s*no/i.test(pageText) ||
+      /your\s*po\s*no/i.test(pageText) ||  // "Your PO No" patterns
+      /p\s*\/?\s*o\s*ref/i.test(pageText) ||  // "P/O REF" patterns
+      /sold\s*to/i.test(pageText) ||  // "SOLD TO" patterns
+      /terminal\s*block/i.test(pageText) ||  // Product content indicates delivery
+      /quantity/i.test(pageText) ||  // Quantity fields indicate delivery
+      /ribbon/i.test(pageText) ||  // Product items
+      pageText.length > 500  // If page has substantial content, include it
     );
     
-    // Detect company/supplier patterns on this page
+    // Detect company/supplier patterns on this page - very flexible for OCR issues
     const companyPatterns = [
-      /(WAGO\s+Electronic\s+Pte\s+Ltd)/i,
-      /(SENCONIX\s+PTE\s+LTD)/i,
-      /(WAH\s+LEI\s+INDUSTRIAL\s+SUPPLY\s+CO\.\s+PTE\.\s+LTD\.)/i,
-      /(SCL\s+System\s+Enterprise\s+Pte\s+Ltd)/i,
-      /([A-Z][A-Za-z\s&.,]{5,50}(?:Pte\s+Ltd|Private\s+Limited|Inc|Corp|Ltd|LLC|Co))/i
+      // WAGO patterns - multiple variations - make even more flexible
+      /WAGO[\s\w]*?[Ee]\s*lectronic/i,  // Very flexible WAGO pattern - just need WAGO + Electronic
+      /WAGO\s+E\s+lectronic\s+P\s+te\s+L\s+td/i,  // OCR spaced pattern
+      /WAGO.*?electronic/i,  // Even simpler WAGO pattern
+      /13B?\s+J\s*oo\s+S\s*eng\s+R\s*oad/i,  // WAGO address pattern
+
+      // SENCONIX patterns - multiple variations
+      /SENCONIX/i,  // Simple SENCONIX pattern
+      /(sen\s*conix\.com)/i,  // Alternative SENCONIX detection from email
+      /enquiry@sen\s*conix\.com/i,  // Email pattern
+
+      // WAH LEI patterns - multiple variations
+      /WAH\s+LEI[\s\w]*?INDUSTRIAL/i,  // Flexible WAH LEI pattern - just need WAH LEI + INDUSTRIAL
+      /SUPPLIER:\s*WAH\s+LEI/i,  // Direct supplier line detection
+      /WAH\s+LE[I!]\s+INDUSTRIAL\s+SUPPLY/i,  // Handle OCR ! vs I confusion
+
+      // SCL patterns - multiple variations
+      /SCL[\s\w]*?System[\s\w]*?Enterprise/i,  // Flexible SCL pattern - just need SCL + System + Enterprise
+      /SCL\s+S\s*ystem\s+E\s*nterprise/i,  // OCR spaced pattern
+
+      // Generic company patterns to catch anything we missed
+      /[A-Z]{2,}\s+[A-Z][a-z]+\s+[A-Z][a-z]+\s+Pte\s+Ltd/i,  // Generic "XXX YYY ZZZ Pte Ltd" pattern
     ];
     
     let detectedCompany = null;
     for (const pattern of companyPatterns) {
       const match = pageText.match(pattern);
       if (match) {
-        detectedCompany = match[1].trim();
+        detectedCompany = match[0].trim();  // Use match[0] since not all patterns have capture groups
+
+        // Clean up OCR spacing issues
+        detectedCompany = detectedCompany
+          .replace(/\s+/g, ' ')  // Replace multiple spaces with single space
+          .replace(/([a-z])\s+([A-Z])/g, '$1$2')  // Remove spaces before capitals (e.g., "P te" -> "Pte")
+          .replace(/\s+([.,])/g, '$1')  // Remove spaces before punctuation
+          .trim();
+
+        // Standardize company names based on detected patterns
+        const lower = detectedCompany.toLowerCase();
+        if (lower.includes('wago')) {
+          detectedCompany = 'WAGO Electronic Pte Ltd';
+        } else if (lower.includes('senconix')) {
+          detectedCompany = 'SENCONIX PTE LTD';
+        } else if (lower.includes('wah') && lower.includes('lei')) {
+          detectedCompany = 'WAH LEI INDUSTRIAL SUPPLY CO. PTE. LTD.';
+        } else if (lower.includes('scl')) {
+          detectedCompany = 'SCL System Enterprise Pte Ltd';
+        }
+
         console.log(`Detected company: ${detectedCompany}`);
         break;
       }
     }
-    
-    if (isDeliveryDocument && detectedCompany) {
+
+    console.log(`Page ${i + 1} analysis: isDeliveryDocument=${isDeliveryDocument}, detectedCompany="${detectedCompany}"`);
+
+    // Include page if it's either a delivery document OR has a detected company (more inclusive)
+    if (isDeliveryDocument || detectedCompany) {
       // Generate filename for this document
       const pageNumber = i + 1;
       const baseName = originalFileName.replace(/\.(pdf|PDF)$/, '');
@@ -216,14 +275,14 @@ const correctOCRText = (text: string): string => {
     [/J[o0][o0]\s+S[e3]ng/gi, 'Joo Seng'],
     [/R[o0][a4]d/gi, 'Road'],
     
-    // Number confusions
-    [/O(\d)/g, '0$1'], // O confused with 0
-    [/(\d)O/g, '$10'], // O confused with 0
-    [/l(\d)/g, '1$1'], // l confused with 1
-    [/(\d)l/g, '$11'], // l confused with 1
+    // Number confusions - DISABLED AGGRESSIVE PATTERNS THAT BREAK PO NUMBERS
+    // [/O(\d)/g, '0$1'], // O confused with 0 - DISABLED: can break PO numbers
+    // [/(\d)O/g, '$10'], // O confused with 0 - DISABLED: can break PO numbers
+    // [/l(\d)/g, '1$1'], // l confused with 1 - DISABLED: can break text
+    // [/(\d)l/g, '$11'], // l confused with 1 - DISABLED: can break text
     [/Q(?=\s|$)/g, 'O'], // Q -> O at word boundaries
     [/8(?=\s+[A-Z])/g, 'B'], // 8 -> B before capital letters
-    [/5(?=\s+[A-Z])/g, 'S'], // 5 -> S before capital letters
+    // [/5(?=\s+[A-Z])/g, 'S'], // 5 -> S before capital letters - DISABLED: BREAKS P055918
   ];
   
   let correctedText = text;
@@ -266,9 +325,16 @@ const extractDataFromText = (text: string) => {
   try {
     // Extract supplier name with comprehensive patterns for delivery orders
     const supplierPatterns = [
-      // High priority: Specific company patterns first
-      /(WAGO\s+Electronic\s+Pte\s+Ltd)/i,
-      /(SENCONIX\s+PTE\s+LTD)/i,
+      // High priority: Specific company patterns first (OCR-friendly with extreme spacing tolerance)
+      /(WAGO\s+E\s+lectronic\s+P\s+te\s+L\s+td)/i,  // "WAGO E lectronic P te L td" - handle extreme OCR spacing
+      /(WAGO\s*[Ee]\s*lectronic\s*[Pp]\s*te\s*[Ll]\s*td)/i,  // Handle normal OCR spacing issues
+      /(SENCONIX\s*PTE\s*LTD)/i,  // SENCONIX direct company name
+      /(S\s*E\s*N\s*C\s*O\s*N\s*I\s*X)/i,  // SENCONIX with extreme OCR spacing
+      // Lower priority: email patterns as fallback
+      /(enquiry@sen\s*conix\.com)/i,  // SENCONIX via email pattern (fallback)
+      /(WAH\s+LEI\s+INDUSTRIAL\s+SUPPLY\s+CO\.\s*PTE\.\s*LTD\.)/i,
+      /(SCL\s+S\s*ystem\s+E\s*nterprise\s+P\s*te\s+L\s*td)/i,  // "SCL S ystem E nterprise P te L td" - handle extreme OCR spacing
+      /(SCL\s*System\s*Enterprise\s*Pte\s*Ltd)/i,
       
       // Standard supplier patterns
       /supplier[:\s]+([^\n\r,;]+)/i,
@@ -323,10 +389,23 @@ const extractDataFromText = (text: string) => {
         supplier = supplier.replace(/[:\s]+$/, ''); // Remove trailing colons/spaces
         supplier = supplier.replace(/^\s*[-•*]\s*/, ''); // Remove leading bullets
         supplier = supplier.replace(/\s+/g, ' '); // Normalize spaces
+        supplier = supplier.replace(/([a-z])\s+([A-Z])/g, '$1$2');  // Remove spaces before capitals (e.g., "P te" -> "Pte")
+        supplier = supplier.replace(/\s+([.,])/g, '$1');  // Remove spaces before punctuation
         supplier = supplier.replace(/WAGQ/g, 'WAGO'); // Fix common OCR error
         supplier = supplier.replace(/WAG[OQ0]/g, 'WAGO'); // Fix OCR variations
         supplier = supplier.replace(/Electronic\s+Pte\s+Ltd.*$/i, 'Electronic Pte Ltd'); // Clean trailing text
         supplier = supplier.replace(/\s*-\s*[^-]*$/, ''); // Remove trailing descriptions after dash
+
+        // Fix common OCR issues with standardized company names
+        if (supplier.toLowerCase().includes('wago') && supplier.toLowerCase().includes('lectronic')) {
+          supplier = 'WAGO Electronic Pte Ltd';
+        } else if (supplier.toLowerCase().includes('senconix') || supplier.toLowerCase().includes('sen conix')) {
+          supplier = 'SENCONIX PTE LTD';
+        } else if (supplier.toLowerCase().includes('wah lei')) {
+          supplier = 'WAH LEI INDUSTRIAL SUPPLY CO. PTE. LTD.';
+        } else if (supplier.toLowerCase().includes('scl system')) {
+          supplier = 'SCL System Enterprise Pte Ltd';
+        }
         
         // Filter out invalid supplier names
         const invalidSuppliers = [
@@ -374,13 +453,24 @@ const extractDataFromText = (text: string) => {
       }
     }
 
-    // Extract PO Number with patterns specific to your OCR output
+    // Extract PO Number with patterns specific to your OCR output - based on actual OCR text
     const poPatterns = [
-      // Direct PO patterns from the OCR text we see
-      /Your\s*order\s*no\.?\s*:?\s*(PO\d+)/i, // "Your order no.: PO55903"
-      /Your\s*PO\s*No\s*:?\s*(P[O0]\d+)/i, // "Your PO No: PO55918" (SENCONIX)
-      /P\/O\s*REF\s*:?\s*(PO\d+)/i, // "P/O REF: PO55910" (WAH LEI)
-      /YOUR\s*PO\s*NO\.?\s*:?\s*(PO\d+)/i, // "YOUR PO NO.: PO55922" (SCL)
+      // EXACT patterns from OCR logs - extract everything after the colon
+      /Y\s*our\s*order\s*no\.\s*:\s*(P\s*\d+\w*)/i, // "Y our order no.: P 055903" (WAGO)
+      /Y\s*our\s*PO\s*N\s*o\s*:\s*(P\s*\d+\w*)/i, // "Y our PO N o: P 05591B" (SENCONIX)
+      /P\s*\/\s*O\s*REF\s*:\s*(PO[R0]?\s*[5R]?\s*\d+)/i, // "P/O REF : PO55919" or "POR 5919" (WAH LEI OCR variations)
+      /PO\s*Number\s*:\s*(P\s*\d+\w*)/i, // "PO Number: P 055922" (SCL)
+
+      // More flexible patterns
+      /Your\s*order\s*no\.\s*:\s*(P[O0]?\s*\d+\w*)/i, // Less spaced version
+      /Your\s*PO\s*No?\s*:\s*(P[O0]?\s*\d+\w*)/i, // Less spaced version
+      /P\s*\/?\s*O\s*REF\s*:\s*(PO[R0]?\s*\d+)/i, // Less spaced version
+      /PO\s*Number\s*:\s*(P[O0]?\s*\d+\w*)/i, // Less spaced version
+
+      // Even more flexible patterns
+      /order\s*no\.\s*:\s*(P[O0]?\s*\d+\w*)/i, // Generic order no
+      /PO\s*No?\s*:\s*(P[O0]?\s*\d+\w*)/i, // Generic PO No
+      /REF\s*:\s*(PO[R0]?\s*\d+)/i, // Generic REF
       /your\s*order\s*no\.?\s*:?\s*([a-zA-Z0-9\-_\/]{3,20})/i,
       /your\s*po\s*no\.?\s*:?\s*([a-zA-Z0-9\-_\/]{3,20})/i,
       /order\s*no\.?\s*:?\s*([a-zA-Z0-9\-_\/]{3,20})/i,
@@ -412,10 +502,30 @@ const extractDataFromText = (text: string) => {
         console.log(`Raw PO match: "${poNumber}"`);
         
         // Clean up OCR artifacts in PO number
-        poNumber = poNumber.replace(/\s+/g, ''); // Remove all spaces
-        poNumber = poNumber.replace(/[O]/g, '0'); // Replace O with 0
-        poNumber = poNumber.replace(/[Il]/g, '1'); // Replace I,l with 1
-        poNumber = poNumber.replace(/[^a-zA-Z0-9\-_\/]/g, ''); // Remove other artifacts
+        poNumber = poNumber.replace(/\s+/g, ''); // Remove all spaces first
+
+        // Handle specific OCR patterns based on what we see in logs
+        if (!poNumber.startsWith('P')) {
+          // If it doesn't start with P, add it (for numbers like "055903")
+          poNumber = 'P' + poNumber;
+        }
+
+        // Keep POR as is for WAH LEI documents - don't convert to PO
+        // But need to handle OCR character replacement carefully
+
+        // OCR character corrections - handle WAH LEI special case
+        if (poNumber.toUpperCase().startsWith('POR')) {
+          // WAH LEI case: "POR 5919" should be "PO55919" (OCR misread "55" as "R 5")
+          poNumber = poNumber.replace(/^POR\s*/, 'PO5'); // Convert "POR " to "PO5"
+          poNumber = poNumber.replace(/[O]/g, '0'); // Replace O with 0
+          poNumber = poNumber.replace(/[Il]/g, '1'); // Replace I,l with 1
+          poNumber = poNumber.replace(/[^a-zA-Z0-9]/g, ''); // Remove other artifacts
+        } else {
+          // For other PO numbers, apply normal cleaning
+          poNumber = poNumber.replace(/[O]/g, '0'); // Replace O with 0
+          poNumber = poNumber.replace(/[Il]/g, '1'); // Replace I,l with 1
+          poNumber = poNumber.replace(/[^a-zA-Z0-9]/g, ''); // Remove other artifacts but keep letters
+        }
         
         console.log(`Cleaned PO: "${poNumber}"`);
         
