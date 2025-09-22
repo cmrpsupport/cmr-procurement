@@ -712,17 +712,22 @@ export default function PRGenerator() {
 
         console.log(`Row ${i + headerRow + 2}:`, { qty, symbol, description, maker, partNumber });
 
-        // Check if this is a main item (has both maker and part number)
-        const isMainItem = maker && partNumber;
-        
-        console.log(`Main item check for row ${i + headerRow + 2}:`, {
+        // Check if this is an accessory (description starts with "(number)")
+        const isAccessory = /^\(\d+\)/.test(description.trim());
+
+        // Check if this is a main item (has both maker and part number AND is not an accessory)
+        const isMainItem = maker && partNumber && !isAccessory;
+
+        console.log(`Item check for row ${i + headerRow + 2}:`, {
           maker: `"${maker}"`,
           partNumber: `"${partNumber}"`,
+          description: `"${description.substring(0, 50)}..."`,
+          isAccessory: isAccessory,
           isMainItem: isMainItem,
           makerExists: !!maker,
           partNumberExists: !!partNumber
         });
-        
+
         if (isMainItem) {
           console.log(`✓ Processing as main item: ${partNumber} by ${maker}`);
           console.log(`Looking for continuation rows starting from row ${i + 1 + headerRow + 2}...`);
@@ -783,20 +788,10 @@ export default function PRGenerator() {
             console.log(`No continuation rows found for ${partNumber}, keeping single-line description: "${description}"`);
           }
           
-          // Check if this is an accessory item (description starts with "(number)")
-          const isAccessory = /^\(\d+\)/.test(description.trim());
-          
           // Update the current main item tracker
-          if (!isAccessory && partNumber) {
-            currentMainItemPartNumber = partNumber;
-            console.log(`📋 New main item detected: ${partNumber}`);
-          }
-          
-          // Debug accessory detection
-          if (isAccessory) {
-            console.log(`🔧 Accessory detected: ${description.trim()} | Part: ${partNumber} | Main Item: ${currentMainItemPartNumber}`);
-          }
-          
+          currentMainItemPartNumber = partNumber;
+          console.log(`📋 New main item detected: ${partNumber}`);
+
           // Now create the BOM item with the potentially merged description
           const item: BOMItem = {
             partNumber,
@@ -808,8 +803,8 @@ export default function PRGenerator() {
             unitPrice: 0, // Default to 0, user will enter manually
             rowIndex: i + headerRow + 2,
             sheetName,
-            isAccessory,
-            mainItemPartNumber: isAccessory ? currentMainItemPartNumber : undefined,
+            isAccessory: false,
+            mainItemPartNumber: undefined,
             drawingNumber: sheetDrawingInfo.drawingNumber,
             revision: sheetDrawingInfo.revision
           };
@@ -822,6 +817,29 @@ export default function PRGenerator() {
           // Skip the continuation rows we already processed
           i = nextRowIndex - 1; // -1 because the for loop will increment
           console.log(`Processed main item and skipping to row ${nextRowIndex + headerRow + 2}`);
+        } else if (isAccessory && maker && partNumber) {
+          // This is an accessory with its own part number and maker
+          console.log(`✓ Processing as accessory: ${partNumber} by ${maker} | Main Item: ${currentMainItemPartNumber}`);
+
+          const item: BOMItem = {
+            partNumber,
+            supplier: maker,
+            description: description || 'No description',
+            quantity: qty,
+            symbol: symbol || '',
+            remarks,
+            unitPrice: 0, // Default to 0, user will enter manually
+            rowIndex: i + headerRow + 2,
+            sheetName,
+            isAccessory: true,
+            mainItemPartNumber: currentMainItemPartNumber,
+            drawingNumber: sheetDrawingInfo.drawingNumber,
+            revision: sheetDrawingInfo.revision
+          };
+          item.totalPrice = item.unitPrice! * item.quantity;
+
+          addItemToGroups(item);
+          validItemsCount++;
         } else if (maker && !partNumber && description) {
           // Skip items with maker but no part number - they need manual review
           skippedRowsCount++;
@@ -845,65 +863,12 @@ export default function PRGenerator() {
             itemsGrouped[item.supplier] = 0;
             supplierItems[item.supplier] = [];
           }
-          
-          let existingItemIndex = -1;
-          
-          if (item.isAccessory) {
-            // For accessories: combine only if same part number AND same main item AND same drawing info
-            existingItemIndex = supplierItems[item.supplier].findIndex(
-              existingItem => existingItem.partNumber === item.partNumber &&
-                             existingItem.isAccessory &&
-                             existingItem.mainItemPartNumber === item.mainItemPartNumber &&
-                             existingItem.drawingNumber === item.drawingNumber &&
-                             existingItem.revision === item.revision
-            );
-          } else {
-            // For main items: combine if same part number and not accessory AND same drawing info
-            existingItemIndex = supplierItems[item.supplier].findIndex(
-              existingItem => existingItem.partNumber === item.partNumber && 
-                             !existingItem.isAccessory &&
-                             existingItem.drawingNumber === item.drawingNumber &&
-                             existingItem.revision === item.revision
-            );
-          }
-          
-          if (existingItemIndex !== -1) {
-            // Item exists with matching criteria - combine quantities and merge info
-            const existingItem = supplierItems[item.supplier][existingItemIndex];
-            existingItem.quantity += item.quantity;
-            existingItem.totalPrice = (existingItem.unitPrice || 0) * existingItem.quantity;
-            
-            // Merge sheet names for tracking
-            const existingSheets = existingItem.sheetName ? [existingItem.sheetName] : [];
-            const newSheets = item.sheetName ? [item.sheetName] : [];
-            const combinedSheets = [...new Set([...existingSheets, ...newSheets])];
-            existingItem.sheetName = combinedSheets.join(', ');
-            
-            // Merge symbols if different
-            if (item.symbol && existingItem.symbol !== item.symbol) {
-              const existingSymbols = existingItem.symbol ? existingItem.symbol.split(', ') : [];
-              const newSymbols = item.symbol.split(', ');
-              const combinedSymbols = [...new Set([...existingSymbols, ...newSymbols])];
-              existingItem.symbol = combinedSymbols.join(', ');
-            }
-            
-            // Merge remarks if different
-            if (item.remarks && existingItem.remarks !== item.remarks) {
-              const existingRemarks = existingItem.remarks || '';
-              existingItem.remarks = existingRemarks ? 
-                `${existingRemarks}; ${item.remarks}` : 
-                item.remarks;
-            }
-            
-          } else {
-            // New item - add to list
-            itemsGrouped[item.supplier]++;
-            supplierItems[item.supplier].push(item);
-            totalItems++;
-            
-          }
-          
-          // Category tracking removed
+
+          // Always add items individually - no combination at this level
+          // The combination logic is only for display totals in exports
+          itemsGrouped[item.supplier]++;
+          supplierItems[item.supplier].push(item);
+          totalItems++;
         }
 
 
@@ -1006,23 +971,95 @@ export default function PRGenerator() {
   };
 
 
-  // Helper function to calculate combined totals for items with same part number
-  const calculateCombinedTotals = (items: BOMItem[]) => {
-    const partNumberTotals = new Map<string, number>();
+  // Helper function to calculate bundle totals for display
+  const calculateBundleTotals = (items: BOMItem[]) => {
+    const bundleTotals = new Map<string, number>();
     const firstOccurrenceIndex = new Map<string, number>();
 
-    // Calculate total quantities for each part number
+    // Calculate total quantities for each bundle (main items and accessories)
     items.forEach((item, index) => {
-      const current = partNumberTotals.get(item.partNumber) || 0;
-      partNumberTotals.set(item.partNumber, current + item.quantity);
+      let bundleKey: string;
+
+      if (item.isAccessory) {
+        // For accessories, use combination of main item part number and accessory details
+        bundleKey = `${item.mainItemPartNumber}|${item.partNumber}|${item.description}`;
+      } else {
+        // For main items, use part number and description
+        bundleKey = `${item.partNumber}|${item.description}`;
+      }
+
+      const current = bundleTotals.get(bundleKey) || 0;
+      bundleTotals.set(bundleKey, current + item.quantity);
 
       // Record the first occurrence index
-      if (!firstOccurrenceIndex.has(item.partNumber)) {
-        firstOccurrenceIndex.set(item.partNumber, index);
+      if (!firstOccurrenceIndex.has(bundleKey)) {
+        firstOccurrenceIndex.set(bundleKey, index);
       }
     });
 
-    return { partNumberTotals, firstOccurrenceIndex };
+    return { bundleTotals, firstOccurrenceIndex };
+  };
+
+  // Helper function to group bundle items together
+  const groupBundleItems = (items: BOMItem[]): BOMItem[] => {
+    const groupedItems: BOMItem[] = [];
+
+    // Process items in their original order to preserve bundle structure
+    let i = 0;
+    while (i < items.length) {
+      const currentItem = items[i];
+
+      if (!currentItem.isAccessory) {
+        // This is a main item - start a new bundle
+        groupedItems.push(currentItem);
+
+        // Find all accessories that belong to this main item and come after it
+        const mainItemPartNumber = currentItem.partNumber;
+        let j = i + 1;
+        const bundleAccessories: BOMItem[] = [];
+
+        // Look ahead for accessories that belong to this main item
+        while (j < items.length) {
+          const nextItem = items[j];
+
+          if (nextItem.isAccessory && nextItem.mainItemPartNumber === mainItemPartNumber) {
+            bundleAccessories.push(nextItem);
+            j++;
+          } else if (!nextItem.isAccessory) {
+            // Hit another main item, stop looking
+            break;
+          } else {
+            // Hit an accessory for a different main item, stop looking
+            break;
+          }
+        }
+
+        // Sort accessories by their (1), (2), (3) numbers
+        bundleAccessories.sort((a, b) => {
+          const aMatch = a.description.match(/^\((\d+)\)/);
+          const bMatch = b.description.match(/^\((\d+)\)/);
+
+          if (aMatch && bMatch) {
+            return parseInt(aMatch[1]) - parseInt(bMatch[1]);
+          }
+          return a.description.localeCompare(b.description);
+        });
+
+        // Add all accessories for this bundle instance
+        bundleAccessories.forEach(accessory => {
+          groupedItems.push(accessory);
+        });
+
+        // Skip over the accessories we just processed
+        i = j;
+      } else {
+        // This is an orphaned accessory (shouldn't happen with proper processing)
+        groupedItems.push(currentItem);
+        i++;
+      }
+    }
+
+    return groupedItems;
   };
 
   const generatePurchaseRequisitions = async () => {
@@ -1031,13 +1068,17 @@ export default function PRGenerator() {
     try {
       const prs: PurchaseRequisition[] = Object.entries(processedData.supplierItems).map(([supplier, items], index) => {
         const itemsArray = items as BOMItem[];
-        const totalValue = itemsArray.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
-        
+
+        // Group bundle items together
+        const groupedItems = groupBundleItems(itemsArray);
+
+        const totalValue = groupedItems.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+
         return {
           id: Date.now().toString() + index,
           supplier,
-          items: itemsArray,
-          totalItems: itemsArray.length,
+          items: groupedItems,
+          totalItems: groupedItems.length,
           totalValue,
           status: "Draft" as const,
           createdAt: new Date().toLocaleString(),
@@ -1617,12 +1658,19 @@ export default function PRGenerator() {
             color: rgb(0, 0, 0),
           });
 
-          // Total - show combined total only on first occurrence across ALL items
-          const { partNumberTotals, firstOccurrenceIndex } = calculateCombinedTotals(pr.items);
-          // Use globalIndex which correctly represents the position in the full items array
-          const isFirstOccurrence = firstOccurrenceIndex.get(item.partNumber) === globalIndex;
+          // Total - show bundle total only on first occurrence
+          const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(pr.items);
+          let bundleKey: string;
+
+          if (item.isAccessory) {
+            bundleKey = `${item.mainItemPartNumber}|${item.partNumber}|${item.description}`;
+          } else {
+            bundleKey = `${item.partNumber}|${item.description}`;
+          }
+
+          const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === globalIndex;
           if (isFirstOccurrence) {
-            const totalQuantity = partNumberTotals.get(item.partNumber) || 0;
+            const totalQuantity = bundleTotals.get(bundleKey) || 0;
             currentPage.drawText(totalQuantity.toString(), {
               x: columns.total,
               y: yPos,
@@ -1725,12 +1773,18 @@ export default function PRGenerator() {
         
         // Items data with full data (no truncation)
         ...pr.items.map((item, index) => {
-          const { partNumberTotals, firstOccurrenceIndex } = calculateCombinedTotals(pr.items);
-          const isFirstOccurrence = firstOccurrenceIndex.get(item.partNumber) === index;
-          const totalQuantity = isFirstOccurrence ? (partNumberTotals.get(item.partNumber) || 0) : '';
+          // Calculate bundle totals for this item
+          const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(pr.items);
+          let bundleKey: string;
 
-          if (isFirstOccurrence) {
+          if (item.isAccessory) {
+            bundleKey = `${item.mainItemPartNumber}|${item.partNumber}|${item.description}`;
+          } else {
+            bundleKey = `${item.partNumber}|${item.description}`;
           }
+
+          const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === index;
+          const totalQuantity = isFirstOccurrence ? (bundleTotals.get(bundleKey) || 0) : '';
 
           return [
             index + 1,                    // Item
@@ -1740,7 +1794,7 @@ export default function PRGenerator() {
             item.supplier,               // Maker (full text)
             item.partNumber,             // Model/Part No. (full text)
             item.quantity,               // Sub (Quantity)
-            totalQuantity,               // Total (combined quantity on first occurrence only)
+            totalQuantity,               // Total (bundle total on first occurrence only)
             (item.unitPrice || 0).toFixed(2),  // Unit Price
             '',                          // Date Required
             item.remarks || ''           // Remarks (full text)
@@ -2526,9 +2580,17 @@ export default function PRGenerator() {
                         <TableCell>
                           {(() => {
                             const items = (editingPR || selectedPR)!.items;
-                            const { partNumberTotals, firstOccurrenceIndex } = calculateCombinedTotals(items);
-                            const isFirstOccurrence = firstOccurrenceIndex.get(item.partNumber) === index;
-                            return isFirstOccurrence ? partNumberTotals.get(item.partNumber) || 0 : '';
+                            const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(items);
+                            let bundleKey: string;
+
+                            if (item.isAccessory) {
+                              bundleKey = `${item.mainItemPartNumber}|${item.partNumber}|${item.description}`;
+                            } else {
+                              bundleKey = `${item.partNumber}|${item.description}`;
+                            }
+
+                            const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === index;
+                            return isFirstOccurrence ? bundleTotals.get(bundleKey) || 0 : '';
                           })()}
                         </TableCell>
                         <TableCell>
