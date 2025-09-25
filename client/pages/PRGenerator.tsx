@@ -282,16 +282,6 @@ export default function PRGenerator() {
           });
         }
         
-        console.log('Available sheets:', workbook.SheetNames);
-        console.log('Workbook structure:', workbook.Workbook);
-
-        // Log sheet visibility info for debugging
-        if (workbook.Workbook && workbook.Workbook.Sheets) {
-          workbook.Workbook.Sheets.forEach((sheetInfo, index) => {
-            const sheetName = workbook.SheetNames[index];
-            console.log(`Sheet "${sheetName}" - Hidden: ${sheetInfo.Hidden}, Name: ${sheetInfo.name}`);
-          });
-        }
 
         // Function to find header row in a sheet's data
         const findHeaderRowInSheet = (sheetData: any[][]): { headerRow: number, headers: string[] } | null => {
@@ -304,11 +294,6 @@ export default function PRGenerator() {
             const hasMaker = rowHeaders.some(h => h.toLowerCase().includes('maker') || h.toLowerCase().includes('make') || h.toLowerCase().includes('supplier'));
             const hasPartNumber = rowHeaders.some(h => h.toLowerCase().includes('model') || h.toLowerCase().includes('part'));
             
-            console.log(`Checking row ${rowIdx + 1}:`, {
-              rowHeaders,
-              hasMaker,
-              hasPartNumber
-            });
             
             // Additional validation: check if this looks like a real header row
             // Headers should be mostly text, not numbers or mixed content
@@ -329,15 +314,7 @@ export default function PRGenerator() {
             });
             
             if (hasMaker && hasPartNumber && isLikelyHeader) {
-              console.log(`Found BOM headers in row ${rowIdx + 1}:`, rowHeaders);
               return { headerRow: rowIdx, headers: rowHeaders };
-            } else {
-              console.log(`Row ${rowIdx + 1} rejected as header:`, {
-                hasMaker,
-                hasPartNumber,
-                isLikelyHeader,
-                rowHeaders
-              });
             }
           }
           return null;
@@ -358,13 +335,18 @@ export default function PRGenerator() {
 
           // Skip hidden sheets - check workbook.Workbook.Sheets array for visibility info
           let isHidden = false;
+
           if (workbook.Workbook && workbook.Workbook.Sheets && workbook.Workbook.Sheets[i]) {
             const sheetInfo = workbook.Workbook.Sheets[i];
-            isHidden = sheetInfo.Hidden === 1 || sheetInfo.Hidden === 2; // Hidden (1) or VeryHidden (2)
+
+            // Check multiple possible hidden indicators
+            if (sheetInfo.Hidden === 1 || sheetInfo.Hidden === 2 || sheetInfo.Hidden === true ||
+                sheetInfo.state === 'hidden' || sheetInfo.state === 'veryHidden') {
+              isHidden = true;
+            }
           }
 
           if (isHidden) {
-            console.log(`Skipping hidden sheet "${sheetName}"`);
             continue;
           }
 
@@ -372,15 +354,12 @@ export default function PRGenerator() {
           const headerInfo = findHeaderRowInSheet(jsonData);
 
           if (headerInfo) {
-            console.log(`Found BOM format in sheet "${sheetName}"`);
             validSheets.push({
               sheetName,
               worksheet: worksheet,
               jsonData,
               headerInfo
             });
-          } else {
-            console.log(`Sheet "${sheetName}" doesn't have BOM format, skipping...`);
           }
         }
         
@@ -388,7 +367,6 @@ export default function PRGenerator() {
           throw new Error(`No BOM format found in any sheet. Looking for headers containing 'Maker/Make/Supplier' and 'Model/Part No.' columns. Available sheets: ${workbook.SheetNames.join(', ')}`);
         }
         
-        console.log(`Processing ${validSheets.length} sheets with BOM data:`, validSheets.map(s => s.sheetName));
 
         // Helper function to detect drawing number and revision from footer
         const detectDrawingInfo = (jsonData: any[][]): { drawingNumber?: string, revision?: string } => {
@@ -559,12 +537,11 @@ export default function PRGenerator() {
           return { drawingNumber, revision };
         };
 
-        // First pass: collect all drawing numbers from all sheets
+        // First pass: collect all drawing numbers from valid sheets only (not hidden sheets)
         const allDrawingNumbers: { [sheetName: string]: { drawingNumber?: string, revision?: string } } = {};
 
-        for (let i = 0; i < workbook.SheetNames.length; i++) {
-          const sheetName = workbook.SheetNames[i];
-          const jsonData = jsonDataArray[i];
+        for (const sheetInfo of validSheets) {
+          const { sheetName, jsonData } = sheetInfo;
           const drawingInfo = detectDrawingInfo(jsonData);
           allDrawingNumbers[sheetName] = drawingInfo;
         }
@@ -574,7 +551,6 @@ export default function PRGenerator() {
           .filter(([_, info]) => info.drawingNumber)
           .map(([sheetName, info]) => ({ sheetName, ...info }));
         
-        console.log('Drawing numbers found:', foundDrawings);
         
         // Use first found as fallback
         let fallbackDrawing: { drawingNumber?: string, revision?: string } = {};
@@ -603,25 +579,16 @@ export default function PRGenerator() {
             if (foundDrawings.length > 1 && sheetIndex < foundDrawings.length) {
               // Assign different drawings to different sheets
               sheetDrawingInfo = foundDrawings[sheetIndex];
-              console.log(`Smart assignment: Sheet "${sheetName}" gets drawing ${sheetDrawingInfo.drawingNumber}`);
             } else if (fallbackDrawing.drawingNumber) {
               sheetDrawingInfo = fallbackDrawing;
             }
           }
 
           if (jsonData.length < headerRow + 2) {
-            console.log(`Skipping sheet "${sheetName}": no data rows found`);
             continue;
           }
 
           const dataRows = jsonData.slice(headerRow + 1) as any[][];
-          
-          console.log('Total data rows to process:', dataRows.length);
-          console.log('First 5 data rows:', dataRows.slice(0, 5));
-          
-          // Debug: Check for empty rows
-          const nonEmptyRows = dataRows.filter(row => row && row.length > 0 && !row.every(cell => !cell || cell.toString().trim() === ''));
-          console.log('Non-empty data rows:', nonEmptyRows.length);
 
           // Find column indices with flexible matching for this sheet
           const findColumnIndex = (searchTerms: string[]): number => {
@@ -649,25 +616,10 @@ export default function PRGenerator() {
           const symbolCol = findColumnIndex(['symbol', 'tag', 'reference']);
           const descriptionCol = findColumnIndex(['description', 'desc', 'name']);
           const makerCol = findColumnIndex(['maker', 'make', 'supplier', 'vendor', 'manufacturer']);
-          console.log('Maker column detection:', {
-            headers: headers,
-            makerCol: makerCol,
-            foundHeader: makerCol !== -1 ? headers[makerCol] : 'Not found'
-          });
           const partNumberCol = findColumnIndex(['model / part no.', 'model / part no', 'model/part no', 'part number', 'part no']);
           const remarksCol = findColumnIndex(['remarks', 'notes', 'comments']);
 
-          console.log('Column indices:', {
-            qty: qtyCol,
-            symbol: symbolCol,
-            description: descriptionCol,
-            maker: makerCol,
-            partNumber: partNumberCol,
-            remarks: remarksCol
-          });
-
           if (makerCol === -1 || partNumberCol === -1) {
-            console.log(`Sheet "${sheetName}" missing required columns. Need 'Maker/Make/Supplier' and 'Model / Part No.' columns. Found: ${headers.join(', ')}`);
             continue;
           }
 
@@ -695,22 +647,11 @@ export default function PRGenerator() {
         
         // Skip rows where the maker value is actually a header name
         if (maker && headers.some(header => header && header.toString().toLowerCase().includes(maker.toLowerCase()))) {
-          console.log(`Skipping row ${i + headerRow + 2}: maker value "${maker}" is a header name`);
           skippedRowsCount++;
           continue;
         }
         
-        // Debug: Log when "Maker" is found as a data value
-        if (maker && maker.toLowerCase().includes('maker')) {
-          console.log(`WARNING: Found "Maker" as data value in row ${i + headerRow + 2}:`, {
-            row: row,
-            makerCol: makerCol,
-            maker: maker,
-            headers: headers
-          });
-        }
 
-        console.log(`Row ${i + headerRow + 2}:`, { qty, symbol, description, maker, partNumber });
 
         // Check if this is an accessory (description starts with "(number)")
         const isAccessory = /^\(\d+\)/.test(description.trim());
@@ -718,19 +659,8 @@ export default function PRGenerator() {
         // Check if this is a main item (has both maker and part number AND is not an accessory)
         const isMainItem = maker && partNumber && !isAccessory;
 
-        console.log(`Item check for row ${i + headerRow + 2}:`, {
-          maker: `"${maker}"`,
-          partNumber: `"${partNumber}"`,
-          description: `"${description.substring(0, 50)}..."`,
-          isAccessory: isAccessory,
-          isMainItem: isMainItem,
-          makerExists: !!maker,
-          partNumberExists: !!partNumber
-        });
 
         if (isMainItem) {
-          console.log(`✓ Processing as main item: ${partNumber} by ${maker}`);
-          console.log(`Looking for continuation rows starting from row ${i + 1 + headerRow + 2}...`);
           
           // This is a main item, check for continuation rows (multi-line descriptions)
           const continuationDescriptions: string[] = [];
@@ -749,14 +679,6 @@ export default function PRGenerator() {
             const nextPartNumber = partNumberCol !== -1 ? nextRow[partNumberCol]?.toString().trim() : '';
             const nextDescription = descriptionCol !== -1 ? nextRow[descriptionCol]?.toString().trim() : '';
             
-            console.log(`Checking potential continuation row ${nextRowIndex + headerRow + 2}:`, {
-              nextMaker: `"${nextMaker}"`,
-              nextPartNumber: `"${nextPartNumber}"`,
-              nextDescription: `"${nextDescription}"`,
-              makerEmpty: !nextMaker,
-              partNumberEmpty: !nextPartNumber,
-              hasDescription: !!nextDescription
-            });
             
             // Check if this is a continuation row (empty or whitespace-only maker and part number but has description)
             const isContinuationRow = (!nextMaker || nextMaker === '') && 
@@ -764,11 +686,9 @@ export default function PRGenerator() {
                                     nextDescription && nextDescription !== '';
             
             if (isContinuationRow) {
-              console.log(`✓ Found continuation row ${nextRowIndex + headerRow + 2}: "${nextDescription}"`);
               continuationDescriptions.push(nextDescription);
               nextRowIndex++;
             } else {
-              console.log(`✗ Not a continuation row ${nextRowIndex + headerRow + 2}: has maker="${nextMaker}" or partNumber="${nextPartNumber}"`);
               // Hit a new main item or empty row, stop looking
               break;
             }
@@ -778,19 +698,10 @@ export default function PRGenerator() {
           if (continuationDescriptions.length > 0) {
             const fullDescription = [description, ...continuationDescriptions].join('\n');
             description = fullDescription;
-            console.log(`✓ Merged multi-line description for ${partNumber}:`, {
-              originalDescription: `"${description.split('\n')[0]}"`,
-              continuationLines: continuationDescriptions,
-              finalDescription: `"${description}"`,
-              totalLines: description.split('\n').length
-            });
-          } else {
-            console.log(`No continuation rows found for ${partNumber}, keeping single-line description: "${description}"`);
           }
           
           // Update the current main item tracker
           currentMainItemPartNumber = partNumber;
-          console.log(`📋 New main item detected: ${partNumber}`);
 
           // Now create the BOM item with the potentially merged description
           const item: BOMItem = {
@@ -816,10 +727,8 @@ export default function PRGenerator() {
           
           // Skip the continuation rows we already processed
           i = nextRowIndex - 1; // -1 because the for loop will increment
-          console.log(`Processed main item and skipping to row ${nextRowIndex + headerRow + 2}`);
         } else if (isAccessory && maker && partNumber) {
           // This is an accessory with its own part number and maker
-          console.log(`✓ Processing as accessory: ${partNumber} by ${maker} | Main Item: ${currentMainItemPartNumber}`);
 
           const item: BOMItem = {
             partNumber,
@@ -843,18 +752,11 @@ export default function PRGenerator() {
         } else if (maker && !partNumber && description) {
           // Skip items with maker but no part number - they need manual review
           skippedRowsCount++;
-          console.log(`⚠️ Skipping row ${i + headerRow + 2}: has maker (${maker}) and description but no part number - needs manual review`);
         } else {
           skippedRowsCount++;
-          console.log(`⚠️ Skipping row ${i + headerRow + 2}: missing maker (found: ${maker || 'none'}) or part number (found: ${partNumber || 'none'}) - insufficient information`);
         }
           }
           
-          console.log(`Sheet "${sheetName}" processing summary:`, {
-            totalDataRows: dataRows.length,
-            validItemsFromSheet: processedSheets.filter(s => s === sheetName).length,
-            skippedRowsFromSheet: skippedRowsCount
-          });
         }
 
         // Helper functions (moved outside sheet loop)
@@ -872,14 +774,6 @@ export default function PRGenerator() {
         }
 
 
-        console.log('Multi-sheet processing summary:', {
-          totalSheetsProcessed: processedSheets.length,
-          processedSheets: processedSheets,
-          validItemsCount,
-          skippedRowsCount,
-          totalItems,
-          totalSuppliersFound: Object.keys(itemsGrouped).length
-        });
 
         if (totalItems === 0) {
           throw new Error(`No valid items found in any BOM sheets. 
@@ -928,11 +822,9 @@ export default function PRGenerator() {
           items: bomItems
         })
       });
-        } else {
-          console.log('Database not available, using local processing');
         }
       } catch (dbError) {
-        console.log('Database not available, using local processing:', dbError);
+        // Database not available, continue with local processing
       }
 
 
@@ -971,6 +863,44 @@ export default function PRGenerator() {
   };
 
 
+  // Helper function to create consistent bundle keys with main item context
+  const createBundleKey = (item: BOMItem, allItems?: BOMItem[], itemIndex?: number): string => {
+    // Normalize strings by trimming whitespace and converting to lowercase for comparison
+    const normalizeString = (str: string) => str?.trim().toLowerCase() || '';
+
+    if (item.isAccessory && allItems && itemIndex !== undefined) {
+      // For accessories, find the specific main item instance that this accessory belongs to
+      // We need to look backwards from the current position to find the most recent main item
+      // with the matching part number
+
+      let mainItemInstance: BOMItem | null = null;
+
+      // Look backwards from current position to find the main item this accessory belongs to
+      for (let i = itemIndex - 1; i >= 0; i--) {
+        const potentialMainItem = allItems[i];
+        if (!potentialMainItem.isAccessory &&
+            potentialMainItem.partNumber === item.mainItemPartNumber) {
+          mainItemInstance = potentialMainItem;
+          break;
+        }
+      }
+
+      if (mainItemInstance) {
+        // Use the specific main item's description to differentiate accessories
+        return `ACCESSORY|${normalizeString(item.mainItemPartNumber || '')}|${normalizeString(mainItemInstance.description)}|${normalizeString(item.partNumber)}|${normalizeString(item.description)}`;
+      } else {
+        // Fallback if main item not found
+        return `ACCESSORY|${normalizeString(item.mainItemPartNumber || '')}|UNKNOWN_MAIN|${normalizeString(item.partNumber)}|${normalizeString(item.description)}`;
+      }
+    } else if (item.isAccessory) {
+      // Fallback for when we don't have the item index
+      return `ACCESSORY|${normalizeString(item.mainItemPartNumber || '')}|${normalizeString(item.partNumber)}|${normalizeString(item.description)}`;
+    } else {
+      // For main items, use part number and description
+      return `MAIN|${normalizeString(item.partNumber)}|${normalizeString(item.description)}`;
+    }
+  };
+
   // Helper function to calculate bundle totals for display
   const calculateBundleTotals = (items: BOMItem[]) => {
     const bundleTotals = new Map<string, number>();
@@ -978,18 +908,11 @@ export default function PRGenerator() {
 
     // Calculate total quantities for each bundle (main items and accessories)
     items.forEach((item, index) => {
-      let bundleKey: string;
-
-      if (item.isAccessory) {
-        // For accessories, use combination of main item part number and accessory details
-        bundleKey = `${item.mainItemPartNumber}|${item.partNumber}|${item.description}`;
-      } else {
-        // For main items, use part number and description
-        bundleKey = `${item.partNumber}|${item.description}`;
-      }
+      const bundleKey = createBundleKey(item, items, index);
 
       const current = bundleTotals.get(bundleKey) || 0;
-      bundleTotals.set(bundleKey, current + item.quantity);
+      const newTotal = current + item.quantity;
+      bundleTotals.set(bundleKey, newTotal);
 
       // Record the first occurrence index
       if (!firstOccurrenceIndex.has(bundleKey)) {
@@ -1104,13 +1027,11 @@ export default function PRGenerator() {
       setPurchaseRequisitions(savedPRs);
         } else {
           // Fallback to local processing if API fails
-          console.log('Database API not available, using local storage');
           localStorage.setItem('purchase-requisitions', JSON.stringify(prs));
           setPurchaseRequisitions(prs);
         }
       } catch (apiError) {
         // Fallback to local processing if API fails
-        console.log('Database API not available, using local storage:', apiError);
         localStorage.setItem('purchase-requisitions', JSON.stringify(prs));
         setPurchaseRequisitions(prs);
       }
@@ -1177,8 +1098,7 @@ export default function PRGenerator() {
         }
       } catch (apiError) {
         // Fallback to local storage
-        console.log('API not available, saving to local storage:', apiError);
-        const updatedPRs = purchaseRequisitions.map(pr => 
+        const updatedPRs = purchaseRequisitions.map(pr =>
           pr.id === editingPR.id ? editingPR : pr
         );
         setPurchaseRequisitions(updatedPRs);
@@ -1251,8 +1171,6 @@ export default function PRGenerator() {
   };
 
   const downloadPRPDF = async (pr: PurchaseRequisition) => {
-    console.log('Downloading PR as PDF:', pr);
-    console.log('PDF export - PR items count:', pr.items.length);
     setDownloadingPRPDF(pr.id);
     
     try {
@@ -1486,44 +1404,44 @@ export default function PRGenerator() {
         
         items.forEach((item, index) => {
           const globalIndex = pageIndex * itemsPerPage + index;
-          
+
           // Calculate dynamic positioning for each field
           let currentXPosition = columns.description;
-          
+
           const descriptionFormat = formatTextWithDynamicPositioning(
-            item.description || '', 
-            currentXPosition, 
-            textConfig.columnMaxWidths.description, 
-            8, 
+            item.description || '',
+            currentXPosition,
+            textConfig.columnMaxWidths.description,
+            8,
             textConfig.horizontalMargin
           );
           currentXPosition = Math.min(descriptionFormat.nextXPosition, columns.maker); // Don't exceed maker column
-          
+
           const makerFormat = formatTextWithDynamicPositioning(
-            item.supplier || '', 
-            currentXPosition, 
-            textConfig.columnMaxWidths.maker, 
-            8, 
+            item.supplier || '',
+            currentXPosition,
+            textConfig.columnMaxWidths.maker,
+            8,
             textConfig.horizontalMargin
           );
           currentXPosition = Math.min(makerFormat.nextXPosition, columns.modelPart); // Don't exceed part number column
-          
+
           const partNoFormat = formatTextWithDynamicPositioning(
-            item.partNumber || '', 
-            currentXPosition, 
-            textConfig.columnMaxWidths.partNumber, 
-            8, 
+            item.partNumber || '',
+            currentXPosition,
+            textConfig.columnMaxWidths.partNumber,
+            8,
             textConfig.horizontalMargin
           );
-          
+
           const remarksFormat = item.remarks ? formatTextWithDynamicPositioning(
-            item.remarks, 
-            columns.remarks, 
-            textConfig.columnMaxWidths.remarks, 
-            7, 
+            item.remarks,
+            columns.remarks,
+            textConfig.columnMaxWidths.remarks,
+            7,
             textConfig.horizontalMargin
           ) : { lines: [''], fontSize: 7, lineHeight: 16, actualWidth: 0, nextXPosition: columns.remarks };
-          
+
           // Find the maximum number of lines needed for this row
           const maxLines = Math.max(
             descriptionFormat.lines.length,
@@ -1532,14 +1450,14 @@ export default function PRGenerator() {
             remarksFormat.lines.length,
             1 // Minimum 1 line
           );
-          
+
           // Calculate actual row height based on content (restore original logic)
           const baseRowHeight = 20; // Base height for single line items
           const lineSpacing = 16; // Fixed 16pt spacing between lines
           const rowPadding = 8; // Additional padding between rows
           const actualRowHeight = baseRowHeight + ((maxLines - 1) * lineSpacing) + rowPadding;
           const yPos = currentY + 4; // Add 4 points offset to position text above the table lines
-          
+
           // Item number
           currentPage.drawText((globalIndex + 1).toString(), {
             x: columns.item,
@@ -1548,7 +1466,7 @@ export default function PRGenerator() {
             font: font,
             color: rgb(0, 0, 0),
           });
-          
+
           // Drawing Number
           if (item.drawingNumber) {
             currentPage.drawText(item.drawingNumber, {
@@ -1570,7 +1488,7 @@ export default function PRGenerator() {
               color: rgb(0, 0, 0),
             });
           }
-          
+
           // Description (multi-line) - dynamic positioning with proper spacing
           let descriptionStartX = columns.description;
           descriptionFormat.lines.forEach((line, lineIndex) => {
@@ -1584,17 +1502,17 @@ export default function PRGenerator() {
               });
             }
           });
-          
+
           // Maker (supplier) - with boundary checking
           makerFormat.lines.forEach((line, lineIndex) => {
             if (line.trim()) {
               const textX = columns.maker;
               const textY = yPos - (lineIndex * 16);
-              
+
               // Check if text would overflow into model/part column (starts at 500)
               const estimatedTextWidth = line.length * (makerFormat.fontSize * 0.6);
               const maxAllowedWidth = columns.modelPart - columns.maker - 10; // 10pt padding
-              
+
               if (estimatedTextWidth > maxAllowedWidth) {
                 const maxChars = Math.floor(maxAllowedWidth / (makerFormat.fontSize * 0.6)) - 3;
                 const truncatedLine = line.substring(0, maxChars) + '...';
@@ -1616,17 +1534,17 @@ export default function PRGenerator() {
               }
             }
           });
-          
+
           // Model / Part No. - with boundary checking
           partNoFormat.lines.forEach((line, lineIndex) => {
             if (line.trim()) {
               const textX = columns.modelPart;
               const textY = yPos - (lineIndex * 16);
-              
+
               // Check if text would overflow into qty column (starts at 630)
               const estimatedTextWidth = line.length * (partNoFormat.fontSize * 0.6);
               const maxAllowedWidth = columns.sub - columns.modelPart - 10; // 10pt padding
-              
+
               if (estimatedTextWidth > maxAllowedWidth) {
                 const maxChars = Math.floor(maxAllowedWidth / (partNoFormat.fontSize * 0.6)) - 3;
                 const truncatedLine = line.substring(0, maxChars) + '...';
@@ -1648,7 +1566,7 @@ export default function PRGenerator() {
               }
             }
           });
-          
+
           // Quantity
           currentPage.drawText(item.quantity.toString(), {
             x: columns.sub,
@@ -1660,15 +1578,10 @@ export default function PRGenerator() {
 
           // Total - show bundle total only on first occurrence
           const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(pr.items);
-          let bundleKey: string;
-
-          if (item.isAccessory) {
-            bundleKey = `${item.mainItemPartNumber}|${item.partNumber}|${item.description}`;
-          } else {
-            bundleKey = `${item.partNumber}|${item.description}`;
-          }
-
-          const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === globalIndex;
+          // Use the original index from pr.items array for bundle key
+          const originalItemIndex = pr.items.findIndex(originalItem => originalItem === item);
+          const bundleKey = createBundleKey(item, pr.items, originalItemIndex);
+          const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === originalItemIndex;
           if (isFirstOccurrence) {
             const totalQuantity = bundleTotals.get(bundleKey) || 0;
             currentPage.drawText(totalQuantity.toString(), {
@@ -1741,8 +1654,6 @@ export default function PRGenerator() {
       
       // Clean up
       URL.revokeObjectURL(url);
-      
-      console.log('PDF download completed successfully');
     } catch (error) {
       console.error('Error generating PDF:', error);
       alert('Error generating PDF. Please try again.');
@@ -1752,8 +1663,6 @@ export default function PRGenerator() {
   };
 
   const downloadPR = (pr: PurchaseRequisition) => {
-    console.log('Downloading PR (Excel):', pr);
-    console.log('Excel export - PR items count:', pr.items.length);
     setDownloadingPR(pr.id);
     
     try {
@@ -1775,13 +1684,7 @@ export default function PRGenerator() {
         ...pr.items.map((item, index) => {
           // Calculate bundle totals for this item
           const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(pr.items);
-          let bundleKey: string;
-
-          if (item.isAccessory) {
-            bundleKey = `${item.mainItemPartNumber}|${item.partNumber}|${item.description}`;
-          } else {
-            bundleKey = `${item.partNumber}|${item.description}`;
-          }
+          const bundleKey = createBundleKey(item, pr.items, index);
 
           const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === index;
           const totalQuantity = isFirstOccurrence ? (bundleTotals.get(bundleKey) || 0) : '';
@@ -1832,9 +1735,7 @@ export default function PRGenerator() {
 
       // Generate and download file
       const fileName = `${pr.prNumber}_${pr.supplier.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`;
-      console.log('Generating file:', fileName);
       XLSX.writeFile(wb, fileName);
-      console.log('Download completed successfully');
     } catch (error) {
       console.error('Error downloading PR:', error);
       alert('Error downloading Purchase Requisition. Please try again.');
@@ -2581,13 +2482,7 @@ export default function PRGenerator() {
                           {(() => {
                             const items = (editingPR || selectedPR)!.items;
                             const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(items);
-                            let bundleKey: string;
-
-                            if (item.isAccessory) {
-                              bundleKey = `${item.mainItemPartNumber}|${item.partNumber}|${item.description}`;
-                            } else {
-                              bundleKey = `${item.partNumber}|${item.description}`;
-                            }
+                            const bundleKey = createBundleKey(item, items, index);
 
                             const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === index;
                             return isFirstOccurrence ? bundleTotals.get(bundleKey) || 0 : '';
