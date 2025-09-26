@@ -334,9 +334,11 @@ export default function PRGenerator() {
           const worksheet = workbook.Sheets[sheetName];
 
           // Skip hidden sheets - check workbook.Workbook.Sheets array for visibility info
+          // Note: PDF files don't have hidden sheets, so skip this check for PDFs
           let isHidden = false;
 
-          if (workbook.Workbook && workbook.Workbook.Sheets && workbook.Workbook.Sheets[i]) {
+          if (!selectedFile.name.toLowerCase().endsWith('.pdf') &&
+              workbook.Workbook && workbook.Workbook.Sheets && workbook.Workbook.Sheets[i]) {
             const sheetInfo = workbook.Workbook.Sheets[i];
 
             // Check multiple possible hidden indicators
@@ -391,48 +393,67 @@ export default function PRGenerator() {
           let drawingNumber: string | undefined;
           let revision: string | undefined;
 
-          // Method 1: Look for standalone "SUBCONTRACTOR DOCUMENT NUMBER:" label
-          for (let i = 0; i < jsonData.length; i++) {
+          // Method 0: Priority search for "Subcontractor Document Number" label first
+          for (let i = 0; i < jsonData.length && !drawingNumber; i++) {
             const row = jsonData[i];
             if (!row || row.length === 0) continue;
 
-            // Check if any cell contains the subcontractor document number label
             for (let j = 0; j < row.length; j++) {
               const cell = row[j];
               if (!cell) continue;
 
               const cellStr = cell.toString().trim();
 
-              // Check for "SUBCONTRACTOR DOCUMENT NUMBER:" (case insensitive)
-              if (/subcontractor\s+document\s+number\s*:/i.test(cellStr)) {
-                // Look for the drawing number in subsequent rows/cells
-                // First check same row, other columns
-                for (let k = j + 1; k < row.length; k++) {
-                  if (row[k]) {
-                    const candidateValue = row[k].toString().trim();
-                    if (isValidDrawingNumber(candidateValue)) {
-                      drawingNumber = candidateValue;
-                      break;
-                    }
+              // Priority: Look for "Subcontractor Document Number" label
+              if (/subcontractor\s+document\s+number/i.test(cellStr)) {
+
+                // Look for the value in the same cell first (after the colon)
+                const colonMatch = cellStr.match(/subcontractor\s+document\s+number\s*:\s*(.+)/i);
+                if (colonMatch && colonMatch[1].trim()) {
+                  const candidate = colonMatch[1].trim();
+                  if (isValidDrawingNumber(candidate) && !isSymbolNumber(candidate, row, j)) {
+                    drawingNumber = candidate;
+                    break;
                   }
                 }
 
-                // If not found in same row, check next few rows
+                // Expanded search: Look in a broader area around the label
                 if (!drawingNumber) {
-                  for (let nextRowIdx = i + 1; nextRowIdx < Math.min(i + 5, jsonData.length); nextRowIdx++) {
-                    const nextRow = jsonData[nextRowIdx];
-                    if (!nextRow) continue;
+                  // Check next 5 rows and all columns for the drawing number
+                  for (let searchRow = i + 1; searchRow <= Math.min(i + 5, jsonData.length - 1) && !drawingNumber; searchRow++) {
+                    const checkRow = jsonData[searchRow];
+                    if (!checkRow) continue;
 
-                    for (let cellIdx = 0; cellIdx < nextRow.length; cellIdx++) {
-                      if (nextRow[cellIdx]) {
-                        const candidateValue = nextRow[cellIdx].toString().trim();
-                        if (isValidDrawingNumber(candidateValue)) {
+                    for (let searchCol = 0; searchCol < checkRow.length && !drawingNumber; searchCol++) {
+                      if (checkRow[searchCol]) {
+                        const candidateValue = checkRow[searchCol].toString().trim();
+
+                        // Specifically look for the pattern 25006-001-04-02
+                        if (/^\d{5}-\d{3}-\d{2}-\d{2}$/.test(candidateValue)) {
+                          drawingNumber = candidateValue;
+                          break;
+                        }
+
+                        // Also check with general validation
+                        if (isValidDrawingNumber(candidateValue) && !isSymbolNumber(candidateValue, checkRow, searchCol)) {
                           drawingNumber = candidateValue;
                           break;
                         }
                       }
                     }
-                    if (drawingNumber) break;
+                  }
+                }
+
+                // Fallback: Check adjacent cells in same row only if not found above
+                if (!drawingNumber) {
+                  for (let k = j + 1; k < row.length && !drawingNumber; k++) {
+                    if (row[k]) {
+                      const candidateValue = row[k].toString().trim();
+                      if (candidateValue && candidateValue !== ':' && isValidDrawingNumber(candidateValue) && !isSymbolNumber(candidateValue, row, k)) {
+                        drawingNumber = candidateValue;
+                        break;
+                      }
+                    }
                   }
                 }
 
@@ -441,6 +462,37 @@ export default function PRGenerator() {
             }
             if (drawingNumber) break;
           }
+
+          // Method 0b: Fallback - Quick scan for drawing numbers if not found with label
+          if (!drawingNumber) {
+            for (let i = 0; i < jsonData.length && !drawingNumber; i++) {
+              const row = jsonData[i];
+              if (!row || row.length === 0) continue;
+
+              for (let j = 0; j < row.length; j++) {
+                const cell = row[j];
+                if (!cell) continue;
+
+                const cellStr = cell.toString().trim();
+
+                // Check if this looks like a drawing number
+                if (isValidDrawingNumber(cellStr)) {
+                  // Make sure it's not in a BOM data row AND not a symbol number
+                  const rowText = row.map(c => c ? c.toString().toLowerCase() : '').join(' ');
+                  const isNotBOMData = !(/\b(phoenix|bender|schneider|wago|idec|qty|pcs|ea)\b/i.test(rowText));
+                  const isNotSymbol = !isSymbolNumber(cellStr, row, j);
+
+                  if (isNotBOMData && isNotSymbol) {
+                    drawingNumber = cellStr;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+
+
+          // Skip revision detection for PDF files - leave it undefined for now
 
           // Method 2: Traditional footer structure (fallback)
           if (!drawingNumber) {
@@ -498,7 +550,7 @@ export default function PRGenerator() {
                 // Extract drawing number
                 if (docNoCol >= 0 && docNoCol < dataRow.length && dataRow[docNoCol]) {
                   const docValue = dataRow[docNoCol].toString().trim();
-                  if (isValidDrawingNumber(docValue)) {
+                  if (isValidDrawingNumber(docValue) && !isSymbolNumber(docValue, dataRow, docNoCol)) {
                     drawingNumber = docValue;
                   }
                 }
@@ -515,23 +567,74 @@ export default function PRGenerator() {
             }
           }
 
-          // Helper function to validate drawing number patterns
+          // Helper function to check if a value is likely a symbol number
+          function isSymbolNumber(value: string, row: any[], cellIndex: number): boolean {
+            if (!value || typeof value !== 'string') return false;
+
+            const trimmedValue = value.trim();
+
+            // Common symbol patterns in electrical/mechanical drawings
+            const symbolPatterns = [
+              /^\d{1,3}[a-z]\d{1,3}$/i,        // 11h1, 11j2, etc.
+              /^\d{1,3}[a-z]{1,2}$/i,          // 11h, 11j, etc.
+              /^[a-z]\d{1,3}$/i,               // h1, j2, etc.
+              /^\d{1,3}[a-z]\d{1,3}~\d{1,3}[a-z]\d{1,3}$/i, // 11d1~11d5
+              /^[a-z]{1,2}\d{1,3}~[a-z]{1,2}\d{1,3}$/i,     // a1~a5
+              /^\d{1,3}[a-z]{1,2}\d{1,3}[,\s]+\d{1,3}[a-z]{1,2}\d{1,3}/i, // 11h1, 11h2, 11h3
+            ];
+
+            // Check if value matches symbol patterns
+            const matchesSymbolPattern = symbolPatterns.some(pattern => pattern.test(trimmedValue));
+
+            // Check if it's in a symbol-like context (near qty, description columns)
+            const rowText = row.map(c => c ? c.toString().toLowerCase() : '').join(' ');
+            const hasSymbolContext = /\b(symbol|tag|reference|qty|quantity|description)\b/i.test(rowText);
+
+            // Check if the value appears in a comma-separated list (typical for symbols)
+            const isInList = /[,;]\s*/.test(trimmedValue) ||
+                            (cellIndex > 0 && row[cellIndex - 1] && /[,;]\s*$/.test(row[cellIndex - 1].toString())) ||
+                            (cellIndex < row.length - 1 && row[cellIndex + 1] && /^[,;]/.test(row[cellIndex + 1].toString()));
+
+            return matchesSymbolPattern || (hasSymbolContext && isInList);
+          }
+
+          // Helper function to validate drawing number patterns (improved to exclude dates only)
           function isValidDrawingNumber(value: string): boolean {
             if (!value || typeof value !== 'string') return false;
 
             const trimmedValue = value.trim();
-            if (trimmedValue.length < 5) return false; // Too short
+            if (trimmedValue.length < 4) return false; // Too short
 
-            // Try multiple drawing number patterns
-            const patterns = [
-              /^\d{5}-\d{3}-\d{2}-\d{2}$/,    // XXXXX-XXX-XX-XX (like 25006-001-04-02)
-              /^\d{4,6}-\d{2,4}-\d{2,3}-\d{2}$/, // Variable length
-              /^[A-Z0-9]{2,6}-\d{3,4}-\d{2,3}-\d{2}$/, // Alphanumeric start
-              /^\d{3,6}-\d{3}-\d{2}-\d{2}$/,   // Shorter start
-              /^[A-Z]\d{4}-\d{3}-\d{2}-\d{2}$/ // Letter + numbers
+            // Reject obvious symbol patterns first
+            const symbolPatterns = [
+              /^\d{1,3}[a-z]\d{1,3}$/i,        // 11h1, 11j2, etc.
+              /^\d{1,3}[a-z]{1,2}$/i,          // 11h, 11j, etc.
+              /^[a-z]\d{1,3}$/i,               // h1, j2, etc.
+              /^\d{1,3}[a-z]\d{1,3}~\d{1,3}[a-z]\d{1,3}$/i, // 11d1~11d5
             ];
 
-            return patterns.some(pattern => pattern.test(trimmedValue));
+            if (symbolPatterns.some(pattern => pattern.test(trimmedValue))) {
+              return false;
+            }
+
+            // Reject obvious date patterns only
+            const datePatterns = [
+              /^\d{1,2}-\d{1,2}-\d{4}$/,       // DD-MM-YYYY or MM-DD-YYYY
+            ];
+
+            if (datePatterns.some(pattern => pattern.test(trimmedValue))) {
+              return false;
+            }
+
+            // Basic patterns for drawing numbers (keep original broader patterns)
+            const isDrawingLike =
+              /^\d{4,}-\d{2,}-\d{1,}-\d{1,}$/.test(trimmedValue) ||  // XXXXX-XXX-XX-XX format
+              /^[A-Z]\d{4,}$/.test(trimmedValue) ||                   // A12345 format
+              /^\d{4,8}$/.test(trimmedValue) ||                       // 12345 format
+              /^[A-Z0-9]+-[A-Z0-9]+-[A-Z0-9]+/.test(trimmedValue) || // General dashed format
+              /^[A-Z0-9]{5,15}$/.test(trimmedValue);                  // Alphanumeric 5-15 chars
+
+            return isDrawingLike;
           }
 
           return { drawingNumber, revision };
@@ -544,6 +647,7 @@ export default function PRGenerator() {
           const { sheetName, jsonData } = sheetInfo;
           const drawingInfo = detectDrawingInfo(jsonData);
           allDrawingNumbers[sheetName] = drawingInfo;
+
         }
         
         // Collect all unique drawing numbers found
@@ -639,11 +743,11 @@ export default function PRGenerator() {
         }
 
         const qty = qtyCol !== -1 ? parseFloat(row[qtyCol]) || 1 : 1;
-        const symbol = symbolCol !== -1 ? row[symbolCol]?.toString().trim() : '';
-        let description = descriptionCol !== -1 ? row[descriptionCol]?.toString().trim() : '';
-        const maker = makerCol !== -1 ? row[makerCol]?.toString().trim() : '';
-        const partNumber = partNumberCol !== -1 ? row[partNumberCol]?.toString().trim() : '';
-        let remarks = remarksCol !== -1 ? row[remarksCol]?.toString().trim() : '';
+        const symbol = symbolCol !== -1 && row[symbolCol] ? row[symbolCol].toString().trim() : '';
+        let description = descriptionCol !== -1 && row[descriptionCol] ? row[descriptionCol].toString().trim() : '';
+        const maker = makerCol !== -1 && row[makerCol] ? row[makerCol].toString().trim() : '';
+        const partNumber = partNumberCol !== -1 && row[partNumberCol] ? row[partNumberCol].toString().trim() : '';
+        let remarks = remarksCol !== -1 && row[remarksCol] ? row[remarksCol].toString().trim() : '';
         
         // Skip rows where the maker value is actually a header name
         if (maker && headers.some(header => header && header.toString().toLowerCase().includes(maker.toLowerCase()))) {
@@ -675,9 +779,9 @@ export default function PRGenerator() {
               break;
             }
             
-            const nextMaker = makerCol !== -1 ? nextRow[makerCol]?.toString().trim() : '';
-            const nextPartNumber = partNumberCol !== -1 ? nextRow[partNumberCol]?.toString().trim() : '';
-            const nextDescription = descriptionCol !== -1 ? nextRow[descriptionCol]?.toString().trim() : '';
+            const nextMaker = makerCol !== -1 && nextRow[makerCol] ? nextRow[makerCol].toString().trim() : '';
+            const nextPartNumber = partNumberCol !== -1 && nextRow[partNumberCol] ? nextRow[partNumberCol].toString().trim() : '';
+            const nextDescription = descriptionCol !== -1 && nextRow[descriptionCol] ? nextRow[descriptionCol].toString().trim() : '';
             
             
             // Check if this is a continuation row (empty or whitespace-only maker and part number but has description)
