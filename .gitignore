@@ -24,6 +24,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+debug-*.txt
+debug-*.log
 
 # Local env files
 .env*.local
@@ -57,3 +59,8 @@ gradle/
 # OS
 .DS_Store
 Thumbs.db
+
+# AI/Build tools
+.claude/
+.builder/
+.cursor/
