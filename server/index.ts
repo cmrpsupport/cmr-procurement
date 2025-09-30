@@ -13,7 +13,7 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { handleDemo } from "./routes/demo";
-import { processDocument, processMultipleDocuments } from "./routes/document-processing";
+import documentProcessingRouter from "./routes/document-processing";
 import { initDatabase, getAllDocuments, getDocumentById, deleteDocument } from "./database";
 
 // Helper function to generate CSV content from document data
@@ -187,13 +187,12 @@ export function createServer() {
   app.get("/api/demo", handleDemo);
 
   // Document processing routes
-  app.post("/api/process-document", processDocument);
-  app.post("/api/process-documents", processMultipleDocuments);
+  app.use("/api", documentProcessingRouter);
   
   // Document storage and retrieval routes
-  app.get("/api/documents", (req, res) => {
+  app.get("/api/documents", async (req, res) => {
     try {
-      const documents = getAllDocuments();
+      const documents = await getAllDocuments();
       res.json(documents);
     } catch (error) {
       console.error("Error fetching documents:", error);
@@ -201,10 +200,10 @@ export function createServer() {
     }
   });
   
-  app.get("/api/documents/:id/download", (req, res) => {
+  app.get("/api/documents/:id/download", async (req, res) => {
     try {
       console.log(`📥 CSV download request for document ID: ${req.params.id}`);
-      const document = getDocumentById(req.params.id);
+      const document = await getDocumentById(req.params.id);
       console.log('📄 Document found:', document ? 'Yes' : 'No');
       
       if (!document) {
@@ -232,9 +231,9 @@ export function createServer() {
   });
 
   // Get single document by ID
-  app.get("/api/documents/:id", (req, res) => {
+  app.get("/api/documents/:id", async (req, res) => {
     try {
-      const document = getDocumentById(req.params.id);
+      const document = await getDocumentById(req.params.id);
       if (!document) {
         return res.status(404).json({ error: "Document not found" });
       }
@@ -246,9 +245,9 @@ export function createServer() {
   });
 
   // Delete document
-  app.delete("/api/documents/:id", (req, res) => {
+  app.delete("/api/documents/:id", async (req, res) => {
     try {
-      const document = getDocumentById(req.params.id);
+      const document = await getDocumentById(req.params.id);
       if (!document) {
         return res.status(404).json({ error: "Document not found" });
       }
@@ -262,7 +261,7 @@ export function createServer() {
       }
 
       // Delete from database
-      const deleted = deleteDocument(req.params.id);
+      const deleted = await deleteDocument(req.params.id);
       if (deleted) {
         res.json({ message: "Document deleted successfully" });
       } else {

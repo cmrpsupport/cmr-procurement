@@ -200,9 +200,9 @@ const createTables = () => {
 };
 
 // Document operations
-export const saveDocument = (documentData: any) => {
+export const saveDocument = async (documentData: any) => {
   try {
-    const db = getDatabase();
+    const db = await getDatabase();
     
     // Begin transaction
     const transaction = db.transaction((data: any) => {
@@ -301,9 +301,9 @@ export const saveDocument = (documentData: any) => {
   }
 };
 
-export const getAllDocuments = () => {
+export const getAllDocuments = async () => {
   try {
-    const db = getDatabase();
+    const db = await getDatabase();
     
     const query = db.prepare(`
       SELECT 
@@ -382,9 +382,9 @@ export const getAllDocuments = () => {
   }
 };
 
-export const getDocumentById = (id: string) => {
+export const getDocumentById = async (id: string) => {
   try {
-    const db = getDatabase();
+    const db = await getDatabase();
     
     const query = db.prepare(`
       SELECT 
@@ -464,9 +464,9 @@ export const getDocumentById = (id: string) => {
   }
 };
 
-export const deleteDocument = (id: string) => {
+export const deleteDocument = async (id: string) => {
   try {
-    const db = getDatabase();
+    const db = await getDatabase();
     
     const deleteQuery = db.prepare('DELETE FROM documents WHERE id = ?');
     const result = deleteQuery.run(id);

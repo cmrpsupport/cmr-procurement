@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback, ErrorBoundary } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
 import { Link } from 'react-router-dom';
 
@@ -20,11 +20,15 @@ import {
   Calendar,
   Building,
   Hash,
-  Trash2
+  Trash2,
+  Edit,
+  AlertTriangle
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { 
   Dialog, 
   DialogContent, 
@@ -50,7 +54,6 @@ import {
   TableHeader, 
   TableRow 
 } from '@/components/ui/table';
-import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ThemeToggle } from '@/components/ThemeToggle';
@@ -106,7 +109,6 @@ export default function DocumentAssistant() {
   const [documentHistory, setDocumentHistory] = useState<Document[]>([]);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [searchFilter, setSearchFilter] = useState<string>("all");
-  const [filteredDocuments, setFilteredDocuments] = useState<Document[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   
   // Batch operations states
@@ -121,7 +123,41 @@ export default function DocumentAssistant() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [documentToDelete, setDocumentToDelete] = useState<Document | null>(null);
   
+  // Edit states
+  const [showEditDialog, setShowEditDialog] = useState(false);
+  const [documentToEdit, setDocumentToEdit] = useState<Document | null>(null);
+  const [editFormData, setEditFormData] = useState({
+    supplier: '',
+    poNumber: '',
+    projectNumber: '',
+    jobNumber: '',
+    doNumber: '',
+    date: ''
+  });
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Error fallback component
+  const ErrorFallback = ({ error, resetError }: { error: Error; resetError: () => void }) => (
+    <div className="p-6 bg-destructive/10 border border-destructive/20 rounded-lg" role="alert">
+      <div className="flex items-start space-x-3">
+        <AlertCircle className="w-5 h-5 text-destructive mt-0.5 flex-shrink-0" />
+        <div className="flex-1">
+          <h3 className="text-sm font-medium text-destructive mb-2">Something went wrong</h3>
+          <p className="text-sm text-destructive mb-3">{error.message}</p>
+          <Button 
+            onClick={resetError}
+            variant="outline"
+            size="sm"
+            className="text-destructive border-destructive hover:bg-destructive hover:text-destructive-foreground"
+          >
+            Try Again
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 
   // Enhanced progress tracking with accurate stage-based time estimation
   const updateProgress = (current: number, total: number, stage: string, startTime: number, stageType?: 'pdf_load' | 'page_render' | 'ocr' | 'backend' | 'complete') => {
@@ -428,7 +464,7 @@ export default function DocumentAssistant() {
     return processedText;
   };
 
-  const handleFileSelect = (files: File[]) => {
+  const handleFileSelect = useCallback((files: File[]) => {
     console.log("handleFileSelect called with files:", files);
     
     const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/tiff', 'image/tif', 'application/pdf'];
@@ -460,9 +496,9 @@ export default function DocumentAssistant() {
     setSelectedFiles(validFiles);
     setShowResults(false);
     setUploadError("");
-  };
+  }, []);
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = useCallback((e: React.DragEvent) => {
     console.log("handleDrop called");
     e.preventDefault();
     setIsDragging(false);
@@ -472,28 +508,28 @@ export default function DocumentAssistant() {
     if (files.length > 0) {
       handleFileSelect(files); // Process all files
     }
-  };
+  }, [handleFileSelect]);
 
-  const handleDragOver = (e: React.DragEvent) => {
+  const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(true);
-  };
+  }, []);
 
-  const handleDragLeave = (e: React.DragEvent) => {
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-  };
+  }, []);
 
-  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     console.log("handleFileInputChange called");
     const files = e.target.files;
     console.log("Selected files from input:", files);
     if (files && files.length > 0) {
       handleFileSelect(Array.from(files)); // Process all selected files
     }
-  };
+  }, [handleFileSelect]);
 
-  const processDocuments = async () => {
+  const processDocuments = useCallback(async () => {
     if (selectedFiles.length === 0) return;
 
     setIsProcessing(true);
@@ -536,9 +572,9 @@ export default function DocumentAssistant() {
             const rawExtractedText = await processPDFWithTesseract(file);
             console.log(`Raw text extracted: ${rawExtractedText.length} characters`);
 
-            // Preprocess text for better field extraction
-            const extractedText = preprocessTextForExtraction(rawExtractedText);
-            console.log(`Preprocessed text: ${extractedText.length} characters`);
+            // DON'T preprocess - send raw text to server for extraction
+            const extractedText = rawExtractedText;
+            console.log(`Raw text ready for server: ${extractedText.length} characters`);
             
             // Show a preview of what will be sent to server for extraction
             console.log(`\n=== SENDING TO SERVER FOR EXTRACTION ===`);
@@ -556,7 +592,8 @@ export default function DocumentAssistant() {
             formData.append("pageCount", pageCount.toString());
             
             console.log("Sending PDF data to server with extractedText and pageCount");
-            updateProgress(pdf.numPages, pdf.numPages, "Sending to server for data extraction...", startTime, 'backend');
+            const currentTime = Date.now();
+            updateProgress(pdf.numPages, pdf.numPages, "Sending to server for data extraction...", currentTime, 'backend');
             response = await fetch("/api/process-document", {
               method: "POST",
               body: formData,
@@ -594,7 +631,7 @@ export default function DocumentAssistant() {
           
           // Call the API endpoint with timeout
           const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout
+          const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 second timeout for images
           
           updateProgress(0.5, 1, "Server processing document...", startTime, 'backend');
           
@@ -623,6 +660,14 @@ export default function DocumentAssistant() {
 
         const result = await response.json();
         console.log(`API response for ${file.name}:`, result);
+        
+        // Show debug info if available
+        if (result.debugInfo) {
+          console.log("🔍 DEBUG INFO FROM SERVER:");
+          console.log("OCR Text Length:", result.debugInfo.ocrTextLength);
+          console.log("OCR First Chars:", result.debugInfo.ocrFirstChars);
+          console.log("Extraction Results:", result.debugInfo.extractionResults);
+        }
 
         // Check if this is a multi-document response
         if (result.multiDocument && result.results) {
@@ -716,6 +761,10 @@ export default function DocumentAssistant() {
       if (error instanceof Error) {
         if (error.name === 'AbortError') {
           errorMessage = "Request timed out. Please try again with smaller files or check your connection.";
+        } else if (error.message.includes('network')) {
+          errorMessage = "Network error. Please check your connection and try again.";
+        } else if (error.message.includes('size')) {
+          errorMessage = "File too large. Please try with smaller files (max 5MB each).";
         } else {
           errorMessage = error.message;
         }
@@ -741,15 +790,15 @@ export default function DocumentAssistant() {
         fileInputRef.current.value = "";
       }
     }
-  };
+  }, [selectedFiles]);
 
-  const openDocument = (doc: Document) => {
+  const openDocument = useCallback((doc: Document) => {
     console.log("Opening document:", doc);
     setSelectedDocument(doc);
     setShowDocumentDialog(true);
-  };
+  }, []);
 
-  const generateCSVFromDocument = (doc: Document): string => {
+  const generateCSVFromDocument = useCallback((doc: Document): string => {
     const headers = [
       'Field',
       'Extracted Value'
@@ -800,17 +849,14 @@ export default function DocumentAssistant() {
     ].join('\n');
     
     return csvContent;
-  };
+  }, []);
 
   // Load document history on component mount
   useEffect(() => {
     loadDocumentHistory();
   }, []);
 
-  // Filter documents based on search query and filter
-  useEffect(() => {
-    filterDocuments();
-  }, [searchQuery, searchFilter, documentHistory]);
+  // Note: filteredDocuments is now computed with useMemo above
 
   const loadDocumentHistory = async () => {
     setIsLoading(true);
@@ -827,7 +873,7 @@ export default function DocumentAssistant() {
     }
   };
 
-  const filterDocuments = () => {
+  const filteredDocuments = useMemo(() => {
     let filtered = documentHistory;
 
     if (searchQuery.trim()) {
@@ -869,10 +915,10 @@ export default function DocumentAssistant() {
       });
     }
 
-    setFilteredDocuments(filtered);
-  };
+    return filtered;
+  }, [documentHistory, searchQuery, searchFilter]);
 
-  const downloadDocument = async (doc: Document) => {
+  const downloadDocument = useCallback(async (doc: Document) => {
     console.log('CSV download button clicked for document:', doc);
     console.log('Document ID:', doc.id);
     
@@ -900,14 +946,14 @@ export default function DocumentAssistant() {
       console.error('Failed to download CSV:', error);
       alert('Failed to download CSV: ' + error.message);
     }
-  };
+  }, []);
 
-  const handleDeleteClick = (doc: Document) => {
+  const handleDeleteClick = useCallback((doc: Document) => {
     setDocumentToDelete(doc);
     setShowDeleteDialog(true);
-  };
+  }, []);
 
-  const confirmDelete = async () => {
+  const confirmDelete = useCallback(async () => {
     if (!documentToDelete) return;
     
     try {
@@ -931,10 +977,68 @@ export default function DocumentAssistant() {
       console.error('Failed to delete document:', error);
       alert('Failed to delete document: ' + error.message);
     }
-  };
+  }, [documentToDelete]);
+
+  // Edit handlers
+  const handleEditClick = useCallback((doc: Document) => {
+    setDocumentToEdit(doc);
+    setEditFormData({
+      supplier: doc.supplier || '',
+      poNumber: doc.poNumber || '',
+      projectNumber: doc.projectNumber || '',
+      jobNumber: doc.jobNumber || '',
+      doNumber: doc.doNumber || '',
+      date: doc.date || ''
+    });
+    setShowEditDialog(true);
+  }, []);
+
+  const handleEditFormChange = useCallback((field: string, value: string) => {
+    setEditFormData(prev => ({ ...prev, [field]: value }));
+  }, []);
+
+  const saveEditedDocument = useCallback(async () => {
+    if (!documentToEdit) return;
+    
+    setIsSavingEdit(true);
+    try {
+      const response = await fetch(`/api/documents/${documentToEdit.id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(editFormData),
+      });
+      
+      if (response.ok) {
+        const updatedDoc = await response.json();
+        
+        // Update document in both states
+        setDocumentHistory(prev => prev.map(doc => 
+          doc.id === updatedDoc.id ? updatedDoc : doc
+        ));
+        setFilteredDocuments(prev => prev.map(doc => 
+          doc.id === updatedDoc.id ? updatedDoc : doc
+        ));
+        
+        setShowEditDialog(false);
+        setDocumentToEdit(null);
+        console.log('Document updated successfully');
+      } else {
+        const errorText = await response.text();
+        console.error('Update failed:', response.status, errorText);
+        alert(`Update failed: ${errorText}`);
+      }
+    } catch (error) {
+      console.error('Failed to update document:', error);
+      alert('Failed to update document: ' + error.message);
+    } finally {
+      setIsSavingEdit(false);
+    }
+  }, [documentToEdit, editFormData]);
 
   // Batch operations functions
-  const toggleDocumentSelection = (docId: string) => {
+  const toggleDocumentSelection = useCallback((docId: string) => {
     const newSelection = new Set(selectedDocuments);
     if (newSelection.has(docId)) {
       newSelection.delete(docId);
@@ -942,9 +1046,9 @@ export default function DocumentAssistant() {
       newSelection.add(docId);
     }
     setSelectedDocuments(newSelection);
-  };
+  }, [selectedDocuments]);
 
-  const toggleSelectAll = () => {
+  const toggleSelectAll = useCallback(() => {
     if (selectedDocuments.size === filteredDocuments.length) {
       // Deselect all
       setSelectedDocuments(new Set());
@@ -953,13 +1057,24 @@ export default function DocumentAssistant() {
       const allIds = new Set(filteredDocuments.map(doc => doc.id));
       setSelectedDocuments(allIds);
     }
-  };
+  }, [selectedDocuments, filteredDocuments]);
 
-  const clearSelection = () => {
+  const clearSelection = useCallback(() => {
     setSelectedDocuments(new Set());
-  };
+  }, []);
 
-  const batchDownloadCSV = async () => {
+  // Helper function to get confidence level from document
+  const getDocumentConfidence = useCallback((doc: Document): number => {
+    return doc.extractedData?.confidence || 0;
+  }, []);
+
+  // Helper function to check if document needs manual review
+  const needsManualReview = useCallback((doc: Document): boolean => {
+    const confidence = getDocumentConfidence(doc);
+    return confidence < 0.70; // Less than 70%
+  }, [getDocumentConfidence]);
+
+  const batchDownloadCSV = useCallback(async () => {
     if (selectedDocuments.size === 0) return;
     
     try {
@@ -1036,9 +1151,9 @@ export default function DocumentAssistant() {
       console.error('Failed to download batch CSV:', error);
       alert('Failed to download batch CSV: ' + error.message);
     }
-  };
+  }, [selectedDocuments, documentHistory, clearSelection]);
 
-  const batchDelete = async () => {
+  const batchDelete = useCallback(async () => {
     if (selectedDocuments.size === 0) return;
     
     const confirmMessage = `Are you sure you want to delete ${selectedDocuments.size} selected document(s)? This action cannot be undone.`;
@@ -1076,7 +1191,7 @@ export default function DocumentAssistant() {
       console.error('Failed to delete documents:', error);
       alert('Failed to delete some documents: ' + error.message);
     }
-  };
+  }, [selectedDocuments, clearSelection]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-background to-muted/30">
@@ -1144,6 +1259,8 @@ export default function DocumentAssistant() {
                     accept=".jpg,.jpeg,.png,.tif,.tiff,.pdf"
                     multiple
                     onChange={handleFileInputChange}
+                    aria-label="Upload document files"
+                    aria-describedby="file-upload-description"
                   />
 
                   {isProcessing ? (
@@ -1263,8 +1380,11 @@ export default function DocumentAssistant() {
                              <h3 className="text-lg font-medium text-foreground mb-2">
                           {isDragging ? 'Drop your documents here' : 'Upload Delivery Orders'}
                         </h3>
-                                                     <p className="text-muted-foreground mb-4">Intelligent document processing • Supports multiple JPG, PNG, TIFF, PDF files</p>
-                          <Button onClick={() => fileInputRef.current?.click()}>
+                                                     <p className="text-muted-foreground mb-4" id="file-upload-description">Intelligent document processing • Supports multiple JPG, PNG, TIFF, PDF files</p>
+                          <Button 
+                            onClick={() => fileInputRef.current?.click()}
+                            aria-describedby="file-upload-description"
+                          >
                             <Upload className="w-4 h-4 mr-2" />
                           Choose Files
                           </Button>
@@ -1278,10 +1398,19 @@ export default function DocumentAssistant() {
                 </div>
 
                 {uploadError && (
-                  <div className="mt-4 p-3 bg-destructive/10 border border-destructive/20 rounded-lg">
-                    <div className="flex items-center space-x-2 text-sm text-destructive">
-                      <AlertCircle className="w-4 h-4" />
-                      <span>{uploadError}</span>
+                  <div className="mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-lg" role="alert" aria-live="polite">
+                    <div className="flex items-start space-x-3">
+                      <AlertCircle className="w-5 h-5 text-destructive mt-0.5 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h4 className="text-sm font-medium text-destructive mb-1">Upload Error</h4>
+                        <p className="text-sm text-destructive">{uploadError}</p>
+                        <button 
+                          onClick={() => setUploadError("")}
+                          className="mt-2 text-xs text-destructive hover:text-destructive/80 underline"
+                        >
+                          Dismiss
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1302,8 +1431,33 @@ export default function DocumentAssistant() {
                       <div key={index} className="bg-card border rounded-lg p-4">
                         <div className="space-y-3">
                           <div className="flex items-center justify-between mb-2">
-                            <h4 className="font-medium text-foreground">Document {index + 1}</h4>
+                            <div className="flex items-center space-x-3">
+                              <h4 className="font-medium text-foreground">Document {index + 1}</h4>
+                              {/* Confidence badge */}
+                              {getDocumentConfidence(processedDocument) > 0 && (
+                                <Badge 
+                                  variant={needsManualReview(processedDocument) ? 'destructive' : 'outline'}
+                                >
+                                  {needsManualReview(processedDocument) && (
+                                    <AlertTriangle className="w-3 h-3 mr-1" />
+                                  )}
+                                  {(getDocumentConfidence(processedDocument) * 100).toFixed(0)}% confidence
+                                </Badge>
+                              )}
+                            </div>
                             <div className="flex space-x-2">
+                              {/* Show edit button for low-confidence documents */}
+                              {needsManualReview(processedDocument) && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => handleEditClick(processedDocument)}
+                                  title="Edit Missing Fields"
+                                  className="text-orange-600 hover:text-orange-700 border-orange-300"
+                                >
+                                  <Edit className="w-4 h-4" />
+                                </Button>
+                              )}
                               <Button
                                 variant="outline"
                                 size="sm"
@@ -1439,8 +1593,13 @@ export default function DocumentAssistant() {
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
                           className="pl-10"
+                          aria-label="Search documents"
+                          aria-describedby="search-help"
                         />
                       </div>
+                      <p id="search-help" className="text-xs text-muted-foreground mt-1">
+                        Search by supplier, PO number, project number, or filename
+                      </p>
                     </div>
                     <div className="w-full sm:w-48">
                       <Select value={searchFilter} onValueChange={setSearchFilter}>
@@ -1511,8 +1670,12 @@ export default function DocumentAssistant() {
 
                 {/* Document List */}
                 {isLoading ? (
-                  <div className="flex justify-center py-8">
-                    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                  <div className="flex flex-col items-center justify-center py-12 space-y-4">
+                    <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                    <div className="text-center">
+                      <p className="text-sm font-medium text-foreground">Loading documents...</p>
+                      <p className="text-xs text-muted-foreground">Please wait while we fetch your document history</p>
+                    </div>
                   </div>
                 ) : filteredDocuments.length === 0 ? (
                   <div className="text-center py-8">
@@ -1562,9 +1725,10 @@ export default function DocumentAssistant() {
                               checked={selectedDocuments.has(doc.id)}
                               onChange={() => toggleDocumentSelection(doc.id)}
                               title={selectedDocuments.has(doc.id) ? 'Deselect document' : 'Select document'}
+                              aria-label={`${selectedDocuments.has(doc.id) ? 'Deselect' : 'Select'} document ${doc.renamedName}`}
                             />
                             <div className="flex-1 space-y-2">
-                              <div className="flex items-center space-x-3">
+                              <div className="flex items-center space-x-3 flex-wrap">
                                 <FileText className="w-5 h-5 text-muted-foreground" />
                                 <div>
                                 <h4 className="font-medium text-foreground">{doc.renamedName}</h4>
@@ -1573,6 +1737,18 @@ export default function DocumentAssistant() {
                               <Badge variant={doc.status === 'Processed' ? 'default' : 'secondary'}>
                                 {doc.status}
                               </Badge>
+                              {/* Confidence indicator */}
+                              {getDocumentConfidence(doc) > 0 && (
+                                <Badge 
+                                  variant={needsManualReview(doc) ? 'destructive' : 'outline'}
+                                  className="ml-2"
+                                >
+                                  {needsManualReview(doc) && (
+                                    <AlertTriangle className="w-3 h-3 mr-1" />
+                                  )}
+                                  {(getDocumentConfidence(doc) * 100).toFixed(0)}% confidence
+                                </Badge>
+                              )}
                             </div>
                             
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
@@ -1604,6 +1780,18 @@ export default function DocumentAssistant() {
                           </div>
 
                           <div className="flex items-center space-x-2 ml-4">
+                            {/* Show edit button for low-confidence documents */}
+                            {needsManualReview(doc) && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleEditClick(doc)}
+                                title="Edit Missing Fields"
+                                className="text-orange-600 hover:text-orange-700 border-orange-300"
+                              >
+                                <Edit className="w-4 h-4" />
+                              </Button>
+                            )}
                             <Button
                               variant="outline"
                               size="sm"
@@ -1762,6 +1950,137 @@ export default function DocumentAssistant() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Edit Document Dialog */}
+      <Dialog open={showEditDialog} onOpenChange={setShowEditDialog}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center space-x-2">
+              <Edit className="w-5 h-5" />
+              <span>Edit Document Fields</span>
+            </DialogTitle>
+            <DialogDescription>
+              Manually correct or complete the missing fields. Fields marked as "Not found" need your attention.
+              {documentToEdit && (
+                <Badge variant="destructive" className="ml-2 mt-2">
+                  <AlertTriangle className="w-3 h-3 mr-1" />
+                  {(getDocumentConfidence(documentToEdit) * 100).toFixed(0)}% confidence
+                </Badge>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {documentToEdit && (
+            <div className="space-y-4 py-4">
+              <div className="space-y-2">
+                <Label htmlFor="edit-supplier" className="text-sm font-medium">
+                  Supplier Name {editFormData.supplier === 'Not found' || !editFormData.supplier ? <span className="text-destructive">*</span> : ''}
+                </Label>
+                <Input
+                  id="edit-supplier"
+                  value={editFormData.supplier === 'Not found' ? '' : editFormData.supplier}
+                  onChange={(e) => handleEditFormChange('supplier', e.target.value)}
+                  placeholder="Enter supplier name"
+                  className={editFormData.supplier === 'Not found' || !editFormData.supplier ? 'border-destructive' : ''}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-po" className="text-sm font-medium">
+                  PO Number {editFormData.poNumber === 'Not found' || !editFormData.poNumber ? <span className="text-destructive">*</span> : ''}
+                </Label>
+                <Input
+                  id="edit-po"
+                  value={editFormData.poNumber === 'Not found' ? '' : editFormData.poNumber}
+                  onChange={(e) => handleEditFormChange('poNumber', e.target.value)}
+                  placeholder="Enter PO number (e.g., PO55903)"
+                  className={editFormData.poNumber === 'Not found' || !editFormData.poNumber ? 'border-destructive' : ''}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-do" className="text-sm font-medium">
+                  DO Number {editFormData.doNumber === 'Not found' || !editFormData.doNumber ? <span className="text-destructive">*</span> : ''}
+                </Label>
+                <Input
+                  id="edit-do"
+                  value={editFormData.doNumber === 'Not found' ? '' : editFormData.doNumber}
+                  onChange={(e) => handleEditFormChange('doNumber', e.target.value)}
+                  placeholder="Enter DO number"
+                  className={editFormData.doNumber === 'Not found' || !editFormData.doNumber ? 'border-destructive' : ''}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="edit-date" className="text-sm font-medium">
+                  Date {editFormData.date === 'Not found' || !editFormData.date ? <span className="text-destructive">*</span> : ''}
+                </Label>
+                <Input
+                  id="edit-date"
+                  value={editFormData.date === 'Not found' ? '' : editFormData.date}
+                  onChange={(e) => handleEditFormChange('date', e.target.value)}
+                  placeholder="Enter date (e.g., 08.08.2025)"
+                  className={editFormData.date === 'Not found' || !editFormData.date ? 'border-destructive' : ''}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="edit-project" className="text-sm font-medium">
+                    Project Number (Optional)
+                  </Label>
+                  <Input
+                    id="edit-project"
+                    value={editFormData.projectNumber === 'Not found' ? '' : editFormData.projectNumber}
+                    onChange={(e) => handleEditFormChange('projectNumber', e.target.value)}
+                    placeholder="Enter project number"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="edit-job" className="text-sm font-medium">
+                    Job Number (Optional)
+                  </Label>
+                  <Input
+                    id="edit-job"
+                    value={editFormData.jobNumber === 'Not found' ? '' : editFormData.jobNumber}
+                    onChange={(e) => handleEditFormChange('jobNumber', e.target.value)}
+                    placeholder="Enter job number"
+                  />
+                </div>
+              </div>
+
+              <div className="bg-muted/30 p-3 rounded-md text-xs text-muted-foreground">
+                <p className="font-medium mb-1">📌 Tips:</p>
+                <ul className="list-disc list-inside space-y-1">
+                  <li>Fields marked with <span className="text-destructive">*</span> are critical for 70%+ confidence</li>
+                  <li>Optional fields improve overall confidence</li>
+                  <li>Confidence will be recalculated automatically after saving</li>
+                </ul>
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-4">
+                <Button variant="outline" onClick={() => setShowEditDialog(false)} disabled={isSavingEdit}>
+                  Cancel
+                </Button>
+                <Button onClick={saveEditedDocument} disabled={isSavingEdit}>
+                  {isSavingEdit ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Saving...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="w-4 h-4 mr-2" />
+                      Save Changes
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

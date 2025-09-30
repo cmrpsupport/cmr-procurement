@@ -1,131 +1,59 @@
 # Dependencies
 node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
+.pnp
+.pnp.js
 
-# Production builds
+# Testing
+coverage/
+
+# Production
 dist/
 build/
-.next/
-out/
 
-# Environment variables
+# Misc
+.DS_Store
+*.pem
 .env
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
 
-# IDE and editor files
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
 
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# Local env files
+.env*.local
 
-# Logs
-logs
-*.log
+# Vercel
+.vercel
 
-# Runtime data
-pids
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage directory used by tools like istanbul
-coverage/
-*.lcov
-
-# nyc test coverage
-.nyc_output
-
-# Dependency directories
-jspm_packages/
-
-# Optional npm cache directory
-.npm
-
-# Optional eslint cache
-.eslintcache
-
-# Microbundle cache
-.rpt2_cache/
-.rts2_cache_cjs/
-.rts2_cache_es/
-.rts2_cache_umd/
-
-# Optional REPL history
-.node_repl_history
-
-# Output of 'npm pack'
-*.tgz
-
-# Yarn Integrity file
-.yarn-integrity
-
-# parcel-bundler cache (https://parceljs.org/)
-.cache
-.parcel-cache
-
-# Next.js build output
-.next
-
-# Nuxt.js build / generate output
-.nuxt
-dist
-
-# Gatsby files
-.cache/
-# public - commented out to allow static assets like logo to be tracked
-
-# Storybook build outputs
-.out
-.storybook-out
-
-# Temporary folders
-tmp/
-temp/
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
 
 # Database
 *.db
 *.sqlite
 *.sqlite3
 
-# Uploaded files (if any)
+# Uploads
 uploads/
-temp-uploads/
 
-# Google Cloud Service Account & Secrets
-server/config/google-service-account.json
-server/config/*.json
-*.key
-*.pem
+# Gradle (Android build)
+.gradle/
+gradle/
 
-# Build artifacts
-.builder/
-.claude/
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
-# Docker
-.dockerignore
+# OS
+.DS_Store
+Thumbs.db
