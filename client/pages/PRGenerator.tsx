@@ -1027,66 +1027,120 @@ export default function PRGenerator() {
     return { bundleTotals, firstOccurrenceIndex };
   };
 
-  // Helper function to group bundle items together
+  // Helper function to group bundle items by main item, then accessories by drawing number
   const groupBundleItems = (items: BOMItem[]): BOMItem[] => {
-    const groupedItems: BOMItem[] = [];
+    const grouped: BOMItem[] = [];
+    const processed = new Set<number>();
 
-    // Process items in their original order to preserve bundle structure
-    let i = 0;
-    while (i < items.length) {
-      const currentItem = items[i];
+    // Group by main item part number + description
+    const bundleGroups = new Map<string, { mainItems: number[], accessories: number[] }>();
 
-      if (!currentItem.isAccessory) {
-        // This is a main item - start a new bundle
-        groupedItems.push(currentItem);
+    items.forEach((item, index) => {
+      if (!item.isAccessory) {
+        // This is a main item - use part number + description as key
+        const groupKey = `${item.partNumber}|||${item.description.trim().toLowerCase()}`;
 
-        // Find all accessories that belong to this main item and come after it
-        const mainItemPartNumber = currentItem.partNumber;
-        let j = i + 1;
-        const bundleAccessories: BOMItem[] = [];
+        if (!bundleGroups.has(groupKey)) {
+          bundleGroups.set(groupKey, { mainItems: [], accessories: [] });
+        }
+        bundleGroups.get(groupKey)!.mainItems.push(index);
+      }
+    });
 
-        // Look ahead for accessories that belong to this main item
-        while (j < items.length) {
-          const nextItem = items[j];
+    // Now assign accessories to their groups
+    items.forEach((item, index) => {
+      if (item.isAccessory && item.mainItemPartNumber) {
+        // Find which group this accessory belongs to by finding its main item
+        for (let i = 0; i < items.length; i++) {
+          if (!items[i].isAccessory && items[i].partNumber === item.mainItemPartNumber) {
+            const groupKey = `${items[i].partNumber}|||${items[i].description.trim().toLowerCase()}`;
 
-          if (nextItem.isAccessory && nextItem.mainItemPartNumber === mainItemPartNumber) {
-            bundleAccessories.push(nextItem);
-            j++;
-          } else if (!nextItem.isAccessory) {
-            // Hit another main item, stop looking
-            break;
-          } else {
-            // Hit an accessory for a different main item, stop looking
-            break;
+            if (bundleGroups.has(groupKey)) {
+              bundleGroups.get(groupKey)!.accessories.push(index);
+              break;
+            }
           }
         }
+      }
+    });
+
+    // Process each bundle group
+    bundleGroups.forEach((group, groupKey) => {
+      // Group main items by drawing number
+      const mainItemsByDrawing = new Map<string, number[]>();
+      group.mainItems.forEach(mainIdx => {
+        const drawingNum = items[mainIdx].drawingNumber || '';
+        if (!mainItemsByDrawing.has(drawingNum)) {
+          mainItemsByDrawing.set(drawingNum, []);
+        }
+        mainItemsByDrawing.get(drawingNum)!.push(mainIdx);
+      });
+
+      // Group accessories by drawing number
+      const accessoriesByDrawing = new Map<string, number[]>();
+      group.accessories.forEach(accIdx => {
+        const acc = items[accIdx];
+        const drawingNum = acc.drawingNumber || '';
+
+        if (!accessoriesByDrawing.has(drawingNum)) {
+          accessoriesByDrawing.set(drawingNum, []);
+        }
+        accessoriesByDrawing.get(drawingNum)!.push(accIdx);
+      });
+
+      // Get all unique drawing numbers and sort them
+      const allDrawings = new Set([
+        ...mainItemsByDrawing.keys(),
+        ...accessoriesByDrawing.keys()
+      ]);
+      const sortedDrawings = Array.from(allDrawings).sort();
+
+      // For each drawing number, add main item then accessories
+      sortedDrawings.forEach(drawingNum => {
+        // Add main item for this drawing number (if exists)
+        const mainItems = mainItemsByDrawing.get(drawingNum) || [];
+        mainItems.forEach(mainIdx => {
+          if (!processed.has(mainIdx)) {
+            grouped.push(items[mainIdx]);
+            processed.add(mainIdx);
+          }
+        });
+
+        // Add accessories for this drawing number (if exists)
+        const accIndices = accessoriesByDrawing.get(drawingNum) || [];
 
         // Sort accessories by their (1), (2), (3) numbers
-        bundleAccessories.sort((a, b) => {
-          const aMatch = a.description.match(/^\((\d+)\)/);
-          const bMatch = b.description.match(/^\((\d+)\)/);
+        const sortedAccs = accIndices.sort((a, b) => {
+          const aMatch = items[a].description.match(/^\((\d+)\)/);
+          const bMatch = items[b].description.match(/^\((\d+)\)/);
 
           if (aMatch && bMatch) {
-            return parseInt(aMatch[1]) - parseInt(bMatch[1]);
+            const aNum = parseInt(aMatch[1]);
+            const bNum = parseInt(bMatch[1]);
+            if (aNum !== bNum) return aNum - bNum;
           }
-          return a.description.localeCompare(b.description);
+
+          return a - b;
         });
 
-        // Add all accessories for this bundle instance
-        bundleAccessories.forEach(accessory => {
-          groupedItems.push(accessory);
+        // Add the sorted accessories for this drawing number
+        sortedAccs.forEach(accIdx => {
+          if (!processed.has(accIdx)) {
+            grouped.push(items[accIdx]);
+            processed.add(accIdx);
+          }
         });
+      });
+    });
 
-        // Skip over the accessories we just processed
-        i = j;
-      } else {
-        // This is an orphaned accessory (shouldn't happen with proper processing)
-        groupedItems.push(currentItem);
-        i++;
+    // Add any remaining items that weren't processed
+    items.forEach((item, index) => {
+      if (!processed.has(index)) {
+        grouped.push(item);
       }
-    }
+    });
 
-    return groupedItems;
+    return grouped;
   };
 
   const generatePurchaseRequisitions = async () => {
@@ -1329,11 +1383,14 @@ export default function PRGenerator() {
       const tableStartY = 520;
       const rowHeight = 16; // Optimal spacing for text positioning above lines
       
+      // Group bundle items together before chunking
+      const groupedItems = groupBundleItems(pr.items);
+
       // Simple fixed chunking - 6 items per page to prevent overflow
       const itemsPerPage = 6;
       const itemChunks = [];
-      for (let i = 0; i < pr.items.length; i += itemsPerPage) {
-        itemChunks.push(pr.items.slice(i, i + itemsPerPage));
+      for (let i = 0; i < groupedItems.length; i += itemsPerPage) {
+        itemChunks.push(groupedItems.slice(i, i + itemsPerPage));
       }
       
       // Process each page of items
@@ -1783,9 +1840,9 @@ export default function PRGenerator() {
         [],
         // Table headers matching PDF template
         ['Item', 'Drawing No.', 'Rev', 'Description', 'Maker', 'Model / Part No.', 'Sub', 'Total', 'Unit Price', 'Date Required', 'Remarks'],
-        
-        // Items data with full data (no truncation)
-        ...pr.items.map((item, index) => {
+
+        // Group bundle items together before exporting
+        ...groupBundleItems(pr.items).map((item, index) => {
           // Calculate bundle totals for this item
           const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(pr.items);
           const bundleKey = createBundleKey(item, pr.items, index);
