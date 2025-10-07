@@ -1562,9 +1562,25 @@ export default function PRGenerator() {
         
         // Draw items for this page aligned with existing template grid
         let currentY = tableStartY;
-        
+        let previousBundleGroup = '';
+
         items.forEach((item, index) => {
           const globalIndex = pageIndex * itemsPerPage + index;
+
+          // Determine the bundle group for spacing
+          const currentBundleGroup = item.isAccessory
+            ? item.mainItemPartNumber || ''
+            : `${item.partNumber}|||${item.description}`;
+
+          // Add extra spacing ONLY when we encounter a NEW main item (not accessories)
+          if (!item.isAccessory && index > 0 && previousBundleGroup !== '' && currentBundleGroup !== previousBundleGroup) {
+            currentY -= 20; // Add extra space between bundle groups
+          }
+
+          // Update previous bundle group tracker only when we see a main item
+          if (!item.isAccessory) {
+            previousBundleGroup = currentBundleGroup;
+          }
 
           // Calculate dynamic positioning for each field
           let currentXPosition = columns.description;
@@ -1825,8 +1841,54 @@ export default function PRGenerator() {
 
   const downloadPR = (pr: PurchaseRequisition) => {
     setDownloadingPR(pr.id);
-    
+
     try {
+      // Group bundle items together
+      const groupedItems = groupBundleItems(pr.items);
+
+      // Build item rows with blank rows between bundle groups
+      const itemRows: any[] = [];
+      let itemNumber = 1;
+      let previousBundleGroup = '';
+
+      groupedItems.forEach((item, index) => {
+        // Determine the bundle group (main item part number + description)
+        const currentBundleGroup = item.isAccessory
+          ? item.mainItemPartNumber || ''
+          : `${item.partNumber}|||${item.description}`;
+
+        // Add blank row ONLY when we encounter a NEW main item (not accessories)
+        if (!item.isAccessory && index > 0 && previousBundleGroup !== '' && currentBundleGroup !== previousBundleGroup) {
+          itemRows.push([]); // Blank row between bundle groups
+        }
+
+        // Calculate bundle totals for this item
+        const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(pr.items);
+        const bundleKey = createBundleKey(item, pr.items, index);
+
+        const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === index;
+        const totalQuantity = isFirstOccurrence ? (bundleTotals.get(bundleKey) || 0) : '';
+
+        itemRows.push([
+          itemNumber++,                 // Item
+          item.drawingNumber || '',     // Drawing No.
+          item.revision || '',          // Rev
+          item.description,            // Description (full text)
+          item.supplier,               // Maker (full text)
+          item.partNumber,             // Model/Part No. (full text)
+          item.quantity,               // Sub (Quantity)
+          totalQuantity,               // Total (bundle total on first occurrence only)
+          (item.unitPrice || 0).toFixed(2),  // Unit Price
+          '',                          // Date Required
+          item.remarks || ''           // Remarks (full text)
+        ]);
+
+        // Update previous bundle group only when we see a main item
+        if (!item.isAccessory) {
+          previousBundleGroup = currentBundleGroup;
+        }
+      });
+
       // Create PR data matching PDF template format
       const prData = [
         // Header row with company name
@@ -1841,29 +1903,8 @@ export default function PRGenerator() {
         // Table headers matching PDF template
         ['Item', 'Drawing No.', 'Rev', 'Description', 'Maker', 'Model / Part No.', 'Sub', 'Total', 'Unit Price', 'Date Required', 'Remarks'],
 
-        // Group bundle items together before exporting
-        ...groupBundleItems(pr.items).map((item, index) => {
-          // Calculate bundle totals for this item
-          const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(pr.items);
-          const bundleKey = createBundleKey(item, pr.items, index);
-
-          const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === index;
-          const totalQuantity = isFirstOccurrence ? (bundleTotals.get(bundleKey) || 0) : '';
-
-          return [
-            index + 1,                    // Item
-            item.drawingNumber || '',     // Drawing No.
-            item.revision || '',          // Rev
-            item.description,            // Description (full text)
-            item.supplier,               // Maker (full text)
-            item.partNumber,             // Model/Part No. (full text)
-            item.quantity,               // Sub (Quantity)
-            totalQuantity,               // Total (bundle total on first occurrence only)
-            (item.unitPrice || 0).toFixed(2),  // Unit Price
-            '',                          // Date Required
-            item.remarks || ''           // Remarks (full text)
-          ];
-        }),
+        // Add all item rows (with blank rows between bundle groups)
+        ...itemRows,
         
         // Empty row before total
         [],
