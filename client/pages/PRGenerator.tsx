@@ -1381,7 +1381,7 @@ export default function PRGenerator() {
       
       // DYNAMIC CELL LAYOUT - Treat template like Excel with exact row positions
       // Template dimensions: 900pt x 695.455pt
-      const TOTAL_ROWS_IN_TEMPLATE = 18; // 18 rows available per page
+      const TOTAL_ROWS_IN_TEMPLATE = 17; // 17 rows available per page (reduced by 1 to prevent overflow)
       const FIXED_ROW_HEIGHT = 14.2; // Height of each row
       const tableStartY = 528; // Y position of first row baseline
 
@@ -1417,23 +1417,46 @@ export default function PRGenerator() {
       };
 
       // Smart chunking - fit items into 18-row pages based on their row requirements
+      // Also account for blank rows between bundle groups (matching Excel logic)
       const itemChunks = [];
       let currentChunk: any[] = [];
       let currentRowCount = 0;
+      let previousBundleGroup = '';
 
-      for (const item of groupedItems) {
+      for (let i = 0; i < groupedItems.length; i++) {
+        const item = groupedItems[i];
         const rowsNeeded = calculateRowsNeeded(item);
 
+        // Determine the bundle group (matching Excel logic)
+        const currentBundleGroup = item.isAccessory
+          ? item.mainItemPartNumber || ''
+          : `${item.partNumber}|||${item.description}`;
+
+        // Calculate total rows needed (item rows + potential blank row for bundle separation)
+        let totalRowsNeeded = rowsNeeded;
+
+        // Add 1 row for blank row if this is a new bundle group (matching Excel logic)
+        // Only add blank row for NEW main items (not accessories)
+        if (!item.isAccessory && currentChunk.length > 0 && previousBundleGroup !== '' && currentBundleGroup !== previousBundleGroup) {
+          totalRowsNeeded += 1; // Add blank row between bundle groups
+        }
+
         // Check if adding this item would exceed the page limit
-        if (currentRowCount + rowsNeeded > TOTAL_ROWS_IN_TEMPLATE && currentChunk.length > 0) {
+        if (currentRowCount + totalRowsNeeded > TOTAL_ROWS_IN_TEMPLATE && currentChunk.length > 0) {
           // Start new page
           itemChunks.push(currentChunk);
           currentChunk = [];
           currentRowCount = 0;
+          previousBundleGroup = ''; // Reset for new page
         }
 
         currentChunk.push({ ...item, rowsNeeded });
-        currentRowCount += rowsNeeded;
+        currentRowCount += totalRowsNeeded;
+
+        // Update previous bundle group only for main items
+        if (!item.isAccessory) {
+          previousBundleGroup = currentBundleGroup;
+        }
       }
 
       // Push remaining items
@@ -1574,15 +1597,50 @@ export default function PRGenerator() {
         // Draw items for this page using DYNAMIC ROW POSITIONS
         let currentRowPosition = 0; // Track current row position for this page
         let globalItemIndex = 0; // Track global item numbering
+        let previousBundleGroup = ''; // Track bundle groups for spacing
 
         // Calculate global index offset for this page
         for (let p = 0; p < pageIndex; p++) {
           globalItemIndex += itemChunks[p].length;
         }
 
+        // Track previous bundle group - need to get it from last item of previous page if not first page
+        if (pageIndex > 0 && itemChunks[pageIndex - 1].length > 0) {
+          // Find the last main item (not accessory) from previous page
+          for (let i = itemChunks[pageIndex - 1].length - 1; i >= 0; i--) {
+            const prevItem = itemChunks[pageIndex - 1][i];
+            if (!prevItem.isAccessory) {
+              previousBundleGroup = `${prevItem.partNumber}|||${prevItem.description}`;
+              break;
+            }
+          }
+        }
+
         items.forEach((item, index) => {
           const globalIndex = globalItemIndex + index;
           const rowsNeeded = item.rowsNeeded || 1;
+
+          // Determine the bundle group (matching Excel logic)
+          const currentBundleGroup = item.isAccessory
+            ? item.mainItemPartNumber || ''
+            : `${item.partNumber}|||${item.description}`;
+
+          // Add blank row when switching between bundle groups (matching Excel logic)
+          // Only add blank row for NEW main items, not accessories
+          const isFirstItemOnPage = index === 0;
+          const shouldAddBlankRow = !item.isAccessory &&
+                                     (index > 0 || (isFirstItemOnPage && pageIndex > 0)) &&
+                                     previousBundleGroup !== '' &&
+                                     currentBundleGroup !== previousBundleGroup;
+
+          if (shouldAddBlankRow) {
+            currentRowPosition += 1; // Add 1 blank row between bundle groups
+          }
+
+          // Update previous bundle group tracker only when we see a main item
+          if (!item.isAccessory) {
+            previousBundleGroup = currentBundleGroup;
+          }
 
           // Calculate Y position for this item (top line)
           const yPos = tableStartY - (currentRowPosition * FIXED_ROW_HEIGHT);
