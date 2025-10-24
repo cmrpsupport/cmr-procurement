@@ -192,14 +192,73 @@ export default function PRGenerator() {
     pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
   }, []);
 
-  // PDF table extraction function - now returns pages separately
-  const extractTablesFromPDF = async (fileBuffer: ArrayBuffer): Promise<{ pageData: any[][][], totalPages: number }> => {
+  // PDF-specific revision detection from raw text items
+  const detectPDFRevision = (textItems: any[]): string | undefined => {
+    // Look for "REV:" in the footer area (typically bottom 20% of page)
+    // Get all Y coordinates to determine page height
+    const yCoords = textItems.map((item: any) => item.transform[5]).filter((y: number) => !isNaN(y));
+    const minY = Math.min(...yCoords);
+    const maxY = Math.max(...yCoords);
+    const footerThreshold = minY + (maxY - minY) * 0.2; // Bottom 20% of page
+
+    // Filter items in footer area
+    const footerItems = textItems.filter((item: any) => {
+      const y = item.transform[5];
+      return y <= footerThreshold && item.str && item.str.trim();
+    });
+
+    // Look for "REV:" followed by a value
+    for (let i = 0; i < footerItems.length; i++) {
+      const item = footerItems[i];
+      const text = item.str.trim();
+
+      // Check if this item contains EXACTLY "REV:" or "REV" (not just containing these letters)
+      if (/^REV:?$/i.test(text)) {
+        // Look for the next item on the same row (similar Y coordinate)
+        const currentY = item.transform[5];
+        const currentX = item.transform[4];
+
+        // Find items with similar Y (within 5 pixels tolerance) and higher X (to the right)
+        const candidateItems = footerItems.filter((nextItem: any) => {
+          const nextY = nextItem.transform[5];
+          const nextX = nextItem.transform[4];
+          return Math.abs(nextY - currentY) < 5 && nextX > currentX;
+        });
+
+        // Sort by X coordinate and take the closest one
+        candidateItems.sort((a: any, b: any) => a.transform[4] - b.transform[4]);
+
+        if (candidateItems.length > 0) {
+          // Instead of taking the first, look for the first pure number in the candidates
+          for (const candidate of candidateItems) {
+            const revValue = candidate.str.trim();
+
+            // Extract numeric revision only - reject words like DATE, NONE, etc
+            const revMatch = revValue.match(/^([0-9]+)$/); // Only accept pure numbers
+            if (revMatch) {
+              const rev = revMatch[1];
+              return rev;
+            }
+          }
+        }
+      }
+    }
+
+    return undefined;
+  };
+
+  // PDF table extraction function - now returns pages separately with metadata
+  const extractTablesFromPDF = async (fileBuffer: ArrayBuffer): Promise<{ pageData: any[][][], totalPages: number, rawTextItems: any[][] }> => {
     const pdf = await pdfjsLib.getDocument({ data: fileBuffer }).promise;
     const pageData: any[][][] = [];
+    const rawTextItems: any[][] = []; // Store raw text items with coordinates for each page
 
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
       const textContent = await page.getTextContent();
+
+      // Store raw text items for this page (for revision detection)
+      rawTextItems.push(textContent.items);
 
       // Group text items by their Y position (rows)
       const rowMap = new Map<number, any[]>();
@@ -237,7 +296,7 @@ export default function PRGenerator() {
       pageData.push(pageRows);
     }
 
-    return { pageData, totalPages: pdf.numPages };
+    return { pageData, totalPages: pdf.numPages, rawTextItems };
   };
 
   const processBOMFile = async () => {
@@ -252,11 +311,12 @@ export default function PRGenerator() {
 
         let workbook: any;
         let jsonDataArray: any[][][] = [];
+        let pdfResult: { pageData: any[][][], totalPages: number, rawTextItems: any[][] } | null = null;
 
         // Handle different file types
         if (selectedFile.name.toLowerCase().endsWith('.pdf')) {
           // Process PDF
-          const pdfResult = await extractTablesFromPDF(data);
+          pdfResult = await extractTablesFromPDF(data);
 
           // Create a mock workbook structure for PDF data with separate pages
           const sheetNames = pdfResult.pageData.map((_, index) => `PDF_Page_${index + 1}`);
@@ -371,7 +431,7 @@ export default function PRGenerator() {
         
 
         // Helper function to detect drawing number and revision from footer
-        const detectDrawingInfo = (jsonData: any[][]): { drawingNumber?: string, revision?: string } => {
+        const detectDrawingInfo = (jsonData: any[][], sheetName: string): { drawingNumber?: string, revision?: string } => {
           // Find the last row with BOM data
           let lastBOMRow = -1;
           for (let i = jsonData.length - 1; i >= 0; i--) {
@@ -491,17 +551,89 @@ export default function PRGenerator() {
             }
           }
 
+          // Method 1: Priority search for "Revision" label (same approach as drawing number)
+          for (let i = 0; i < jsonData.length && !revision; i++) {
+            const row = jsonData[i];
+            if (!row || row.length === 0) continue;
 
-          // Skip revision detection for PDF files - leave it undefined for now
+            for (let j = 0; j < row.length; j++) {
+              const cell = row[j];
+              if (!cell) continue;
+
+              const cellStr = cell.toString().trim();
+
+              // Look for "Revision" label
+              if (/^revision\s*:?$/i.test(cellStr)) {
+                // Look for the value in the same cell first (after the colon)
+                const colonMatch = cellStr.match(/revision\s*:\s*(.+)/i);
+                if (colonMatch && colonMatch[1].trim()) {
+                  const candidate = colonMatch[1].trim();
+                  const revMatch = candidate.match(/(?:REV\.?\s*)?([A-Z0-9]+)/i);
+                  if (revMatch && revMatch[1]) {
+                    let rev = revMatch[1].toUpperCase();
+                    if (/^\d{1}$/.test(rev)) {
+                      rev = rev.padStart(2, '0');
+                    }
+                    revision = rev;
+                    break;
+                  }
+                }
+
+                // If not in same cell, check next row in the SAME column (j)
+                if (!revision) {
+                  const dataRowIndex = i + 1;
+                  if (dataRowIndex < jsonData.length) {
+                    const dataRow = jsonData[dataRowIndex];
+                    if (dataRow && dataRow[j]) {
+                      const candidateValue = dataRow[j].toString().trim();
+                      const revMatch = candidateValue.match(/(?:REV\.?\s*)?([A-Z0-9]+)/i);
+                      if (revMatch && revMatch[1]) {
+                        let rev = revMatch[1].toUpperCase();
+                        if (/^\d{1}$/.test(rev)) {
+                          rev = rev.padStart(2, '0');
+                        }
+                        revision = rev;
+                      }
+                    }
+                  }
+                }
+
+                // Fallback: Check adjacent cells in same row
+                if (!revision) {
+                  for (let k = j + 1; k < row.length && !revision; k++) {
+                    if (row[k]) {
+                      const candidateValue = row[k].toString().trim();
+                      if (candidateValue && candidateValue !== ':') {
+                        const revMatch = candidateValue.match(/(?:REV\.?\s*)?([A-Z0-9]+)/i);
+                        if (revMatch && revMatch[1]) {
+                          let rev = revMatch[1].toUpperCase();
+                          if (/^\d{1}$/.test(rev)) {
+                            rev = rev.padStart(2, '0');
+                          }
+                          revision = rev;
+                          break;
+                        }
+                      }
+                    }
+                  }
+                }
+
+                if (revision) break;
+              }
+            }
+            if (revision) break;
+          }
 
           // Method 2: Traditional footer structure (fallback)
-          if (!drawingNumber) {
+          if (!drawingNumber || !revision) {
             const startSearchFrom = lastBOMRow + 1;
             let validFooterRow = -1;
             let docNoCol = -1;
             let revisionCol = -1;
 
-            for (let i = startSearchFrom; i < jsonData.length; i++) {
+            // Search last 20 rows (backwards) since footer is at the end
+            const searchStart = Math.max(0, jsonData.length - 20);
+            for (let i = jsonData.length - 1; i >= searchStart; i--) {
               const row = jsonData[i];
               if (!row || row.length === 0) continue;
 
@@ -514,56 +646,70 @@ export default function PRGenerator() {
 
               if (looksBOMData) continue;
 
-              // Check for footer structure
+              // Check for footer structure - look for column headers row
               const hasDocumentTitle = rowText.includes('document title');
               const hasDocNo = rowText.includes('doc') && rowText.includes('no');
               const hasSubcontractorDoc = rowText.includes('subcontractor') && rowText.includes('document') && rowText.includes('number');
               const hasRevision = rowText.includes('revision');
 
-              if (hasDocumentTitle && (hasDocNo || hasSubcontractorDoc) && hasRevision) {
-                validFooterRow = i;
-
-                // Find column positions
+              // Look for header row with "Revision" column (may or may not have doc no in same row)
+              if (hasRevision || hasDocNo || hasDocumentTitle) {
+                // Find column positions in this row
                 for (let j = 0; j < row.length; j++) {
                   const cell = row[j];
                   if (!cell) continue;
 
                   const cellStr = cell.toString().toLowerCase().trim();
+
+                  // Check for Doc No column
                   if ((cellStr.includes('doc') && cellStr.includes('no')) ||
                       (cellStr.includes('subcontractor') && cellStr.includes('document') && cellStr.includes('number'))) {
                     docNoCol = j;
                   }
-                  if (cellStr.includes('revision')) {
+
+                  // Check for Revision column
+                  if (cellStr === 'revision' || cellStr === 'rev' || cellStr === 'rev.' || cellStr === 'revision:') {
                     revisionCol = j;
+                    validFooterRow = i;
                   }
                 }
-                break;
+
+                // If we found at least revision column, try to extract data
+                if (revisionCol >= 0) {
+                  const dataRowIndex = i + 1;
+
+                  if (dataRowIndex < jsonData.length) {
+                    const dataRow = jsonData[dataRowIndex];
+
+                    // Extract drawing number if we haven't found it yet
+                    if (!drawingNumber && docNoCol >= 0 && docNoCol < dataRow.length && dataRow[docNoCol]) {
+                      const docValue = dataRow[docNoCol].toString().trim();
+                      if (isValidDrawingNumber(docValue) && !isSymbolNumber(docValue, dataRow, docNoCol)) {
+                        drawingNumber = docValue;
+                      }
+                    }
+
+                    // Extract revision
+                    if (revisionCol < dataRow.length && dataRow[revisionCol]) {
+                      const revValue = dataRow[revisionCol].toString().trim();
+
+                      // Match various formats: "REV 01", "REV. 00", "Rev A", "1", "A", "01", etc.
+                      const revMatch = revValue.match(/(?:REV\.?\s*)?([A-Z0-9]+)/i);
+                      if (revMatch && revMatch[1]) {
+                        let rev = revMatch[1].toUpperCase();
+                        // Pad numeric revisions with leading zero if single digit
+                        if (/^\d{1}$/.test(rev)) {
+                          rev = rev.padStart(2, '0');
+                        }
+                        revision = rev;
+                        break; // Found revision, stop searching
+                      }
+                    }
+                  }
+                }
               }
-            }
 
-            if (validFooterRow !== -1) {
-              // Get data from next row
-              const dataRowIndex = validFooterRow + 1;
-              if (dataRowIndex < jsonData.length) {
-                const dataRow = jsonData[dataRowIndex];
-
-                // Extract drawing number
-                if (docNoCol >= 0 && docNoCol < dataRow.length && dataRow[docNoCol]) {
-                  const docValue = dataRow[docNoCol].toString().trim();
-                  if (isValidDrawingNumber(docValue) && !isSymbolNumber(docValue, dataRow, docNoCol)) {
-                    drawingNumber = docValue;
-                  }
-                }
-
-                // Extract revision
-                if (revisionCol >= 0 && revisionCol < dataRow.length && dataRow[revisionCol]) {
-                  const revValue = dataRow[revisionCol].toString().trim();
-                  const revMatch = revValue.match(/(?:REV\.?\s*)?(\d{1,2})/i);
-                  if (revMatch) {
-                    revision = revMatch[1].padStart(2, '0');
-                  }
-                }
-              }
+              if (revision) break; // Stop if we found revision
             }
           }
 
@@ -643,9 +789,21 @@ export default function PRGenerator() {
         // First pass: collect all drawing numbers from valid sheets only (not hidden sheets)
         const allDrawingNumbers: { [sheetName: string]: { drawingNumber?: string, revision?: string } } = {};
 
+        // For PDF files, try to detect revision from first page using raw text items
+        let pdfRevision: string | undefined;
+        if (selectedFile.name.toLowerCase().endsWith('.pdf') && pdfResult && pdfResult.rawTextItems.length > 0) {
+          pdfRevision = detectPDFRevision(pdfResult.rawTextItems[0]); // Check first page
+        }
+
         for (const sheetInfo of validSheets) {
           const { sheetName, jsonData } = sheetInfo;
-          const drawingInfo = detectDrawingInfo(jsonData);
+          const drawingInfo = detectDrawingInfo(jsonData, sheetName);
+
+          // For PDF files, use the PDF-specific revision if found
+          if (pdfRevision && selectedFile.name.toLowerCase().endsWith('.pdf')) {
+            drawingInfo.revision = pdfRevision;
+          }
+
           allDrawingNumbers[sheetName] = drawingInfo;
 
         }
@@ -1740,7 +1898,7 @@ export default function PRGenerator() {
           currentPage.drawText(partNoText, {
             x: columns.modelPart,
             y: yPos,
-            size: 8,
+            size: 7,
             font: font,
             color: rgb(0, 0, 0),
           });
@@ -1902,28 +2060,28 @@ export default function PRGenerator() {
         ['', '', '', '', '', '', '', '', `Total: ${pr.totalValue.toLocaleString()}`, '', '']
       ];
 
-    // Create workbook and worksheet
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet(prData);
+      // Create workbook and worksheet
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(prData);
 
-    // Set column widths matching PDF template layout
-    const colWidths = [
-      { wch: 6 },   // Item
-      { wch: 12 },  // Drawing No.
-      { wch: 6 },   // Rev
-      { wch: 35 },  // Description
-      { wch: 12 },  // Maker
-      { wch: 18 },  // Model / Part No.
-      { wch: 6 },   // Sub (Quantity)
-      { wch: 8 },   // Total
-      { wch: 12 },  // Unit Price
-      { wch: 12 },  // Date Required
-      { wch: 15 }   // Remarks
-    ];
-    ws['!cols'] = colWidths;
+      // Set column widths matching PDF template layout
+      const colWidths = [
+        { wch: 6 },   // Item
+        { wch: 12 },  // Drawing No.
+        { wch: 6 },   // Rev
+        { wch: 35 },  // Description
+        { wch: 12 },  // Maker
+        { wch: 18 },  // Model / Part No.
+        { wch: 6 },   // Sub (Quantity)
+        { wch: 8 },   // Total
+        { wch: 12 },  // Unit Price
+        { wch: 12 },  // Date Required
+        { wch: 15 }   // Remarks
+      ];
+      ws['!cols'] = colWidths;
 
-    // Add worksheet to workbook
-    XLSX.utils.book_append_sheet(wb, ws, 'Purchase Requisition');
+      // Add worksheet to workbook
+      XLSX.utils.book_append_sheet(wb, ws, 'Purchase Requisition');
 
       // Generate and download file
       const fileName = `${pr.prNumber}_${pr.supplier.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`;
