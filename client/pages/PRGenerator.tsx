@@ -1624,7 +1624,8 @@ export default function PRGenerator() {
 
       // Process each page of items
       let finalCurrentY = tableStartY;
-      
+      let lastPageRowPosition = 0; // Track final row position on last page
+
       for (let pageIndex = 0; pageIndex < itemChunks.length; pageIndex++) {
         const items = itemChunks[pageIndex];
         let currentPage;
@@ -1942,7 +1943,7 @@ export default function PRGenerator() {
             currentPage.drawText(remarksText, {
               x: columns.remarks,
               y: yPos,
-              size: 7,
+              size: 6,
               font: font,
               color: rgb(0, 0, 0),
             });
@@ -1951,11 +1952,28 @@ export default function PRGenerator() {
           // Move to next row position based on how many rows this item used
           currentRowPosition += rowsNeeded;
         });
+
+        // Add "End" marker on the last page after all items
+        if (pageIndex === itemChunks.length - 1) {
+          lastPageRowPosition = currentRowPosition;
+
+          // Calculate Y position for the End marker (after last item)
+          const endMarkerY = tableStartY - (currentRowPosition * FIXED_ROW_HEIGHT);
+
+          // Draw "End" marker in the Description column
+          currentPage.drawText('------------------------------End------------------------------', {
+            x: columns.description,
+            y: endMarkerY,
+            size: 8,
+            font: font,
+            color: rgb(0, 0, 0),
+          });
+        }
       }
-      
-      // Add total on the last page
-      const lastPageIndex = itemChunks.length - 1;
-      const lastPage = pages[pages.length - 1];
+
+      // Add total on the last page (get updated pages array after all pages added)
+      const allPages = pdfDoc.getPages();
+      const lastPage = allPages[allPages.length - 1];
 
       // Position total amount right next to the "Total:" text in the template
       lastPage.drawText(`${pr.totalValue.toLocaleString()}`, {
@@ -2053,7 +2071,9 @@ export default function PRGenerator() {
 
         // Add all item rows (with blank rows between bundle groups)
         ...itemRows,
-        
+
+        // End marker row
+        ['', '', '', '------------------------------End------------------------------', '', '', '', '', '', '', ''],
         // Empty row before total
         [],
         // Total row
