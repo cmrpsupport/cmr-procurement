@@ -1913,7 +1913,7 @@ export default function PRGenerator() {
             color: rgb(0, 0, 0),
           });
 
-          // Total - show bundle total only on first occurrence
+          // Total and Unit Price - show only on first occurrence
           const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(groupedItems);
           const bundleKey = createBundleKey(item, groupedItems, globalIndex);
           const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === globalIndex;
@@ -1926,16 +1926,16 @@ export default function PRGenerator() {
               font: font,
               color: rgb(0, 0, 0),
             });
-          }
 
-          // Unit Price
-          currentPage.drawText(`${(item.unitPrice || 0).toFixed(2)}`, {
-            x: columns.unitPrice,
-            y: yPos,
-            size: 8,
-            font: font,
-            color: rgb(0, 0, 0),
-          });
+            // Unit Price (only on first occurrence)
+            currentPage.drawText(`${(item.unitPrice || 0).toFixed(2)}`, {
+              x: columns.unitPrice,
+              y: yPos,
+              size: 8,
+              font: font,
+              color: rgb(0, 0, 0),
+            });
+          }
 
           // Remarks
           if (remarksText) {
@@ -2033,6 +2033,7 @@ export default function PRGenerator() {
 
         const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === index;
         const totalQuantity = isFirstOccurrence ? (bundleTotals.get(bundleKey) || 0) : '';
+        const unitPrice = isFirstOccurrence ? (item.unitPrice || 0).toFixed(2) : '';
 
         itemRows.push([
           itemNumber++,                 // Item
@@ -2043,7 +2044,7 @@ export default function PRGenerator() {
           item.partNumber,             // Model/Part No. (full text)
           item.quantity,               // Sub (Quantity)
           totalQuantity,               // Total (bundle total on first occurrence only)
-          (item.unitPrice || 0).toFixed(2),  // Unit Price
+          unitPrice,                   // Unit Price (only on first occurrence)
           '',                          // Date Required
           item.remarks || ''           // Remarks (full text)
         ]);
@@ -2836,17 +2837,26 @@ export default function PRGenerator() {
                           )}
                         </TableCell>
                         <TableCell>
-                          {editingPR ? (
-                            <Input
-                              type="number"
-                              value={item.unitPrice}
-                              onChange={(e) => updateItem(index, 'unitPrice', parseFloat(e.target.value) || 0)}
-                              onFocus={(e) => e.target.select()}
-                              className="w-24"
-                            />
-                          ) : (
-                            `SGD ${item.unitPrice?.toLocaleString()}`
-                          )}
+                          {(() => {
+                            const items = (editingPR || selectedPR)!.items;
+                            const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(items);
+                            const bundleKey = createBundleKey(item, items, index);
+                            const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === index;
+
+                            if (!isFirstOccurrence) return '';
+
+                            return editingPR ? (
+                              <Input
+                                type="number"
+                                value={item.unitPrice}
+                                onChange={(e) => updateItem(index, 'unitPrice', parseFloat(e.target.value) || 0)}
+                                onFocus={(e) => e.target.select()}
+                                className="w-24"
+                              />
+                            ) : (
+                              `SGD ${item.unitPrice?.toLocaleString()}`
+                            );
+                          })()}
                         </TableCell>
                         <TableCell>
                           {(() => {
