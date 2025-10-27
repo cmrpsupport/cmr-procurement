@@ -1914,10 +1914,9 @@ export default function PRGenerator() {
           });
 
           // Total - show bundle total only on first occurrence
-          const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(pr.items);
-          const originalItemIndex = pr.items.findIndex(originalItem => originalItem === item);
-          const bundleKey = createBundleKey(item, pr.items, originalItemIndex);
-          const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === originalItemIndex;
+          const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(groupedItems);
+          const bundleKey = createBundleKey(item, groupedItems, globalIndex);
+          const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === globalIndex;
           if (isFirstOccurrence) {
             const totalQuantity = bundleTotals.get(bundleKey) || 0;
             currentPage.drawText(totalQuantity.toString(), {
@@ -1977,7 +1976,7 @@ export default function PRGenerator() {
 
       // Position total amount right next to the "Total:" text in the template
       lastPage.drawText(`${pr.totalValue.toLocaleString()}`, {
-        x: 680,
+        x: 710,
         y: 270,
         size: 10,
         font: boldFont,
@@ -2842,6 +2841,7 @@ export default function PRGenerator() {
                               type="number"
                               value={item.unitPrice}
                               onChange={(e) => updateItem(index, 'unitPrice', parseFloat(e.target.value) || 0)}
+                              onFocus={(e) => e.target.select()}
                               className="w-24"
                             />
                           ) : (
