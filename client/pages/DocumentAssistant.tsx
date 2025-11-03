@@ -1,9 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo, useCallback, ErrorBoundary } from 'react';
-import * as pdfjsLib from 'pdfjs-dist';
 import { Link } from 'react-router-dom';
-
-// Configure PDF.js worker with working URL
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.mjs`;
 import {
   ArrowLeft, 
   Upload,
@@ -251,218 +247,8 @@ export default function DocumentAssistant() {
     }
   };
 
-  // Enhanced image preprocessing for better OCR quality - optimized for PO numbers and supplier names
-  const enhanceImageForOCR = (canvas: HTMLCanvasElement, context: CanvasRenderingContext2D): HTMLCanvasElement => {
-    const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-    const data = imageData.data;
-
-    // Apply image enhancements optimized for text recognition
-    for (let i = 0; i < data.length; i += 4) {
-      // Convert to grayscale for better OCR performance
-      const gray = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]);
-
-      // Apply adaptive contrast enhancement for better text clarity
-      const enhanced = Math.round(((gray / 255 - 0.5) * 2.0 + 0.5) * 255); // Increased contrast
-      const finalValue = Math.max(0, Math.min(255, enhanced));
-
-      // Apply binarization for cleaner text detection
-      const threshold = 128; // Standard threshold for text separation
-      const adjustedValue = finalValue > threshold ? 255 : 0; // Pure black/white for cleaner OCR
-
-      data[i] = adjustedValue;     // Red
-      data[i + 1] = adjustedValue; // Green
-      data[i + 2] = adjustedValue; // Blue
-      // Alpha remains unchanged
-    }
-
-    context.putImageData(imageData, 0, 0);
-    return canvas;
-  };
-
-  // PDF processing function with detailed progress tracking and enhanced OCR
-  const processPDFWithTesseract = async (file: File): Promise<string> => {
-    try {
-      const startTime = Date.now();
-      setProcessingStartTime(startTime);
-      setProcessingStage("Loading PDF...");
-      setProcessingProgress(0);
-      updateProgress(0, 1, "Loading PDF document...", startTime, 'pdf_load');
-      
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let combinedText = '';
-
-      console.log(`Starting enhanced PDF processing for ${pdf.numPages} pages...`);
-      setTotalPages(pdf.numPages);
-      setProcessingStage("Processing PDF pages with enhanced OCR...");
-      updateProgress(1, 1, "PDF loaded successfully", startTime, 'pdf_load');
-
-      // Process each page of the PDF independently to prevent content mixing
-      const pageTexts: string[] = [];
-
-      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        console.log(`Processing page ${pageNum}/${pdf.numPages}...`);
-        updateProgress(pageNum - 0.5, pdf.numPages, `Rendering page ${pageNum} of ${pdf.numPages}...`, startTime, 'page_render');
-
-        try {
-          const page = await pdf.getPage(pageNum);
-          const viewport = page.getViewport({ scale: 3.0 }); // Reduced scale for stability
-
-          // Create fresh canvas for each page
-          const canvas = document.createElement('canvas');
-          const context = canvas.getContext('2d');
-          if (!context) {
-            throw new Error('Could not create canvas context');
-          }
-
-          canvas.height = viewport.height;
-          canvas.width = viewport.width;
-
-          // Enable image smoothing
-          context.imageSmoothingEnabled = true;
-          context.imageSmoothingQuality = 'high';
-
-          // Clear canvas with white background
-          context.fillStyle = 'white';
-          context.fillRect(0, 0, canvas.width, canvas.height);
-
-          // Render page to canvas
-          await page.render({
-            canvasContext: context,
-            viewport: viewport,
-            canvas: canvas
-          }).promise;
-
-          // Enhance image for OCR
-          updateProgress(pageNum - 0.3, pdf.numPages, `Enhancing page ${pageNum} for OCR...`, startTime, 'page_render');
-          const enhancedCanvas = enhanceImageForOCR(canvas, context);
-
-          // Convert to blob
-          const blob = await new Promise<Blob>((resolve) => {
-            enhancedCanvas.toBlob((blob) => resolve(blob!), 'image/png', 1.0);
-          });
-
-          // OCR processing with fresh worker for each page
-          updateProgress(pageNum - 0.1, pdf.numPages, `OCR processing page ${pageNum}...`, startTime, 'ocr');
-
-          const { createWorker } = await import('tesseract.js');
-          const worker = await createWorker('eng', 1, {
-            logger: m => {
-              if (m.status && m.progress !== undefined) {
-                console.log(`Tesseract page ${pageNum}: ${m.status} - ${Math.round(m.progress * 100)}%`);
-              }
-            }
-          });
-
-          // Configure Tesseract
-          await worker.setParameters({
-            tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz.,;:()[]{}+-*/%$#@!?&\'"\\n\\r\\t\\-_/ ',
-            tessedit_pageseg_mode: 1 as any,
-            tessedit_ocr_engine_mode: 1 as any,
-            preserve_interword_spaces: '1',
-            user_defined_dpi: '300'
-          });
-
-          const { data: { text, confidence } } = await worker.recognize(blob);
-          await worker.terminate();
-
-          // Log page results
-          console.log(`\n=== PAGE ${pageNum} OCR RESULTS ===`);
-          console.log(`Confidence: ${confidence}%`);
-          console.log(`Text length: ${text.length} characters`);
-
-          // Store clean page text
-          pageTexts.push(text);
-
-          console.log(`=== END PAGE ${pageNum} RESULTS ===\n`);
-
-          updateProgress(pageNum, pdf.numPages, `Completed page ${pageNum} of ${pdf.numPages} (${confidence?.toFixed(1)}% confidence)`, startTime, 'ocr');
-
-        } catch (pageError) {
-          console.error(`Error processing page ${pageNum}:`, pageError);
-          pageTexts.push(''); // Add empty text to maintain page order
-          updateProgress(pageNum, pdf.numPages, `Error on page ${pageNum}, continuing...`, startTime);
-        }
-      }
-
-      // Combine all page texts with clear separators
-      combinedText = pageTexts.map((text, index) => {
-        if (!text.trim()) return `\n=== PAGE ${index + 1} (PROCESSING ERROR) ===\n`;
-        return `\n=== PAGE ${index + 1} START ===\n${text}\n=== PAGE ${index + 1} END ===\n`;
-      }).join('\n');
-
-      setProcessingStage("Finalizing document processing...");
-      setProcessingProgress(100);
-      updateProgress(pdf.numPages, pdf.numPages, "Document processing complete!", startTime, 'complete');
-      
-      console.log(`\n=== FINAL COMBINED PDF TEXT ===`);
-      console.log(`Total text length: ${combinedText.length} characters`);
-      console.log(`\n--- COMPLETE FINAL TEXT ---`);
-      console.log(combinedText);
-      console.log(`--- END COMPLETE FINAL TEXT ---\n`);
-      console.log(`=== END FINAL PDF TEXT ===`);
-      
-      // OCR text extraction completed
-      console.log('📁 OCR text extraction completed for analysis');
-
-      return combinedText;
-    } catch (error) {
-      console.error('PDF processing error:', error);
-      setProcessingStage("Error occurred during processing");
-      throw new Error('Failed to process PDF with Tesseract OCR');
-    }
-  };
-
-  // Preprocess extracted text to improve field detection
-  const preprocessTextForExtraction = (rawText: string): string => {
-    let processedText = rawText;
-
-    // Clean up common OCR issues
-    processedText = processedText
-      .replace(/[|]/g, 'I') // Replace pipe characters that might be misread 'I's
-      .replace(/FO([0-9]{5,6})/g, 'PO$1') // Fix F0 -> PO misreads
-      .replace(/P\/0/gi, 'PO') // Fix P/0 -> PO
-      .replace(/D\/O\s*ND/gi, 'DO_NUMBER') // Fix D/O ND pattern
-      .replace(/[oO]([0-9])/g, '0$1') // Fix letter O in numbers
-      .replace(/([0-9])[oO]/g, '$10') // Fix letter O at end of numbers
-      .replace(/S([0-9])/g, '5$1') // Fix S misread as 5
-      .replace(/\s+/g, ' ') // Normalize whitespace
-      .replace(/([A-Z])([a-z])/g, '$1 $2') // Add space between capital and lowercase if missing
-
-    // Enhance key patterns without heavy modification for backend compatibility
-    processedText = processedText.replace(
-      /Your order no\.:/gi,
-      'PO Number:'
-    );
-
-    processedText = processedText.replace(
-      /YOUR PO NO\.?\s*:/gi,
-      'PO Number:'
-    );
-
-    // Enhance supplier company names to be more prominent
-    processedText = processedText.replace(
-      /(WAGO Electronic Pte Ltd|WAH LEI INDUSTRIAL SUPPLY CO\. PTE\. LTD|SCL System Enterprise Pte Ltd)/gi,
-      'SUPPLIER: $1'
-    );
-
-    // Clean up delivery order patterns
-    processedText = processedText.replace(
-      /Delivery Order No\.?\s*:/gi,
-      'DO Number:'
-    );
-
-    processedText = processedText.replace(
-      /DO\s*NO\.?\s*:/gi,
-      'DO Number:'
-    );
-
-    console.log('📋 Text preprocessing completed');
-    console.log('🔍 PO patterns found:', (processedText.match(/PO Number:/g) || []).length);
-    console.log('🏢 Supplier patterns found:', (processedText.match(/SUPPLIER:/g) || []).length);
-
-    return processedText;
-  };
+  // All OCR processing is now done server-side with OCR.space API
+  // No client-side Tesseract or PDF processing needed
 
   const handleFileSelect = useCallback((files: File[]) => {
     console.log("handleFileSelect called with files:", files);
@@ -555,96 +341,38 @@ export default function DocumentAssistant() {
         }
 
         let response;
-        
-        // Handle PDF files with PDF.js + Tesseract
-        if (file.type === "application/pdf") {
-          console.log("Processing PDF file:", file.name);
-          try {
-            // Get PDF info first
-            console.log("Loading PDF document...");
-            const arrayBuffer = await file.arrayBuffer();
-            const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-            const pageCount = pdf.numPages;
-            console.log(`PDF loaded successfully: ${pageCount} pages`);
-            
-            // Extract text from all pages
-            console.log("Extracting text from PDF pages...");
-            const rawExtractedText = await processPDFWithTesseract(file);
-            console.log(`Raw text extracted: ${rawExtractedText.length} characters`);
 
-            // DON'T preprocess - send raw text to server for extraction
-            const extractedText = rawExtractedText;
-            console.log(`Raw text ready for server: ${extractedText.length} characters`);
-            
-            // Show a preview of what will be sent to server for extraction
-            console.log(`\n=== SENDING TO SERVER FOR EXTRACTION ===`);
-            console.log(`File: ${file.name}`);
-            console.log(`Page count: ${pageCount}`);
-            console.log(`Text preview (first 500 chars):`, extractedText.substring(0, 500));
-            console.log(`Text contains PO numbers?: ${/PO\d+|P\.O\.|purchase.*order|order.*no/i.test(extractedText)}`);
-            console.log(`Text contains suppliers?: ${/electronic|pte ltd|company|supplier/i.test(extractedText)}`);
-            console.log(`=== END SERVER PREVIEW ===\n`);
-            
-            // Send the original PDF file along with the extracted text
-            const formData = new FormData();
-            formData.append("document", file);
-            formData.append("extractedText", extractedText);
-            formData.append("pageCount", pageCount.toString());
-            
-            console.log("Sending PDF data to server with extractedText and pageCount");
-            const currentTime = Date.now();
-            updateProgress(pdf.numPages, pdf.numPages, "Sending to server for data extraction...", currentTime, 'backend');
-            response = await fetch("/api/process-document", {
-              method: "POST",
-              body: formData,
-            });
-          } catch (error) {
-            console.error("PDF processing failed:", error);
-            console.error("Error details:", error.stack);
-            // Don't throw error, fall back to normal file upload
-            console.log("Falling back to normal file upload...");
-            const formData = new FormData();
-            formData.append("document", file);
-            
-            response = await fetch("/api/process-document", {
-              method: "POST", 
-              body: formData,
-            });
-          }
-        } else {
-          // Handle image files with progress tracking
-          console.log("Processing image file:", file.name);
-          
-          // Start progress tracking for images
-          const startTime = Date.now();
-          setProcessingStartTime(startTime);
-          setProcessingStage("Preparing image for processing...");
-          setProcessingProgress(10);
-          setTotalPages(1); // Images are single page
-          setEstimatedTimeRemaining("Processing...");
-          
-          const formData = new FormData();
-          formData.append("document", file);
+        // Handle all files (images and PDFs) - send directly to server for OCR
+        console.log("Processing file:", file.name, "Type:", file.type);
 
-          // Update progress during processing
-          updateProgress(0.3, 1, "Uploading image to server...", startTime, 'backend');
-          
-          // Call the API endpoint with timeout
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 120000); // 120 second timeout for images
-          
-          updateProgress(0.5, 1, "Server processing document...", startTime, 'backend');
-          
-          response = await fetch("/api/process-document", {
-            method: "POST",
-            body: formData,
-            signal: controller.signal,
-          });
-          
-          clearTimeout(timeoutId);
-          
-          updateProgress(1, 1, "Image processing completed!", startTime, 'complete');
-        }
+        // Start progress tracking
+        const startTime = Date.now();
+        setProcessingStartTime(startTime);
+        setProcessingStage(`Uploading ${file.type.startsWith('image/') ? 'image' : 'PDF'} to server...`);
+        setProcessingProgress(10);
+        setEstimatedTimeRemaining("Processing...");
+
+        const formData = new FormData();
+        formData.append("document", file);
+
+        // Update progress during processing
+        updateProgress(0.3, 1, "Uploading to server...", startTime, 'backend');
+
+        // Call the API endpoint with timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minute timeout
+
+        updateProgress(0.5, 1, "Server processing with OCR.space...", startTime, 'backend');
+
+        response = await fetch("/api/process-document", {
+          method: "POST",
+          body: formData,
+          signal: controller.signal,
+        });
+
+        clearTimeout(timeoutId);
+
+        updateProgress(1, 1, "Processing completed!", startTime, 'complete');
 
         if (!response.ok) {
           let errorMessage = `HTTP error! status: ${response.status}`;
@@ -799,23 +527,11 @@ export default function DocumentAssistant() {
   }, []);
 
   const generateCSVFromDocument = useCallback((doc: Document): string => {
-    const headers = [
-      'Field',
-      'Extracted Value'
-    ];
-    
-    // Basic document information rows
+    // Extracted data only (no document information fields)
     const basicRows = [
-      ['Document Information', ''],
-      ['Original File Name', doc.originalName],
-      ['Processed File Name', doc.renamedName],
-      ['File Size', doc.fileSize],
-      ['Processing Date', doc.uploadTime],
-      ['Number of Pages', doc.extractedData?.pageCount ? `${doc.extractedData.pageCount} pages` : '1 page'],
-      ['', ''], // Empty row separator
-      ['Extracted Data', ''],
       ['Supplier Name', doc.supplier || doc.extractedData?.supplier || 'Not found'],
       ['PO Number', doc.poNumber || doc.extractedData?.poNumber || 'Not found'],
+      ['PR Number', doc.prNumber || doc.extractedData?.prNumber || 'Not found'],
       ['Project Number', doc.projectNumber || doc.extractedData?.projectNumber || 'Not found'],
       ['Job Number', doc.jobNumber || doc.extractedData?.jobNumber || 'Not found'],
       ['DO Number', doc.doNumber || doc.extractedData?.doNumber || 'Not found'],
@@ -830,23 +546,38 @@ export default function DocumentAssistant() {
       itemRows.push(['Items Delivered', '']);
       itemRows.push(['Total Items Found', `${doc.extractedData.items.length} items`]);
       itemRows.push(['', '']); // Another separator
-      
-      // List each item individually with numbering
-      doc.extractedData.items.forEach((item, index) => {
-        itemRows.push([`Item ${index + 1}`, item.trim()]);
-      });
+
+      // Check if items are in new object format or old string format
+      const firstItem = doc.extractedData.items[0];
+      const isObjectFormat = typeof firstItem === 'object';
+
+      if (isObjectFormat) {
+        // New format with parsed data - add header row
+        itemRows.push(['S/N', 'Part Number', 'Description', 'Quantity', 'UOM']);
+        doc.extractedData.items.forEach((item: any) => {
+          itemRows.push([
+            item.sn || '',
+            item.partNumber || '',
+            item.description || '',
+            item.quantity || '',
+            item.uom || ''
+          ]);
+        });
+      } else {
+        // Old format - just item descriptions
+        doc.extractedData.items.forEach((item: string, index: number) => {
+          itemRows.push([`Item ${index + 1}`, item.trim()]);
+        });
+      }
     } else {
       itemRows.push(['', '']);
       itemRows.push(['Items Delivered', 'No items found']);
     }
 
-    // Combine all rows
+    // Combine all rows (no header row)
     const allRows = [...basicRows, ...itemRows];
-    
-    const csvContent = [
-      headers.join(','),
-      ...allRows.map(row => row.map(cell => `"${cell}"`).join(','))
-    ].join('\n');
+
+    const csvContent = allRows.map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
     
     return csvContent;
   }, []);
@@ -1506,19 +1237,6 @@ export default function DocumentAssistant() {
                             </div>
                           </div>
                           
-                          {/* Processing Analysis Info */}
-                          {(processedDocument as any).processingType && (
-                            <div className="pt-3 border-t">
-                              <div className="grid grid-cols-2 gap-4 text-sm">
-                                <div>
-                                  <span className="font-medium">Processing:</span> {(processedDocument as any).processingMethod}
-                                </div>
-                                <div>
-                                  <span className="font-medium">Confidence:</span> {(processedDocument as any).confidence}
-                                </div>
-                              </div>
-                            </div>
-                          )}
                         </div>
                       </div>
                     ))}
@@ -1874,6 +1592,10 @@ export default function DocumentAssistant() {
                        <p className="text-sm text-foreground mt-1">{selectedDocument.extractedData?.poNumber || 'Not extracted'}</p>
                   </div>
                   <div>
+                       <label className="text-sm font-medium text-muted-foreground">PR Number</label>
+                       <p className="text-sm text-foreground mt-1">{selectedDocument.extractedData?.prNumber || 'Not extracted'}</p>
+                  </div>
+                  <div>
                        <label className="text-sm font-medium text-muted-foreground">Project Number</label>
                        <p className="text-sm text-foreground mt-1">{selectedDocument.extractedData?.projectNumber || 'Not extracted'}</p>
                   </div>
@@ -1899,13 +1621,52 @@ export default function DocumentAssistant() {
                 
                 {selectedDocument.extractedData?.items && selectedDocument.extractedData.items.length > 0 && (
                   <div className="mt-4">
-                    <label className="text-sm font-medium text-muted-foreground">Items Delivered</label>
-                    <div className="mt-1 flex flex-wrap gap-2">
-                      {selectedDocument.extractedData.items.map((item, index) => (
-                        <Badge key={index} variant="outline" className="text-xs">
-                          {item}
-                        </Badge>
-                      ))}
+                    <label className="text-sm font-medium text-muted-foreground mb-2 block">
+                      Items Delivered ({selectedDocument.extractedData.items.length})
+                    </label>
+                    <div className="border rounded-md max-h-96 overflow-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-12 text-center">S/N</TableHead>
+                            <TableHead className="w-32">Part Number</TableHead>
+                            <TableHead>Description</TableHead>
+                            <TableHead className="w-24 text-right">Quantity</TableHead>
+                            <TableHead className="w-16 text-center">UOM</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {selectedDocument.extractedData.items.map((item: any, index) => {
+                            // Handle both old string format and new object format
+                            const isObject = typeof item === 'object';
+                            const sn = isObject ? item.sn : (index + 1).toString();
+                            const partNumber = isObject ? item.partNumber : 'N/A';
+                            const description = isObject ? item.description : item;
+                            const quantity = isObject ? item.quantity : 'N/A';
+                            const uom = isObject ? item.uom : 'N/A';
+
+                            return (
+                              <TableRow key={index}>
+                                <TableCell className="font-medium text-center text-muted-foreground">
+                                  {sn}
+                                </TableCell>
+                                <TableCell className="text-sm font-mono">
+                                  {partNumber}
+                                </TableCell>
+                                <TableCell className="text-sm">
+                                  {description}
+                                </TableCell>
+                                <TableCell className="text-sm text-right font-medium">
+                                  {quantity}
+                                </TableCell>
+                                <TableCell className="text-sm text-center text-muted-foreground">
+                                  {uom}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
                     </div>
                   </div>
                 )}

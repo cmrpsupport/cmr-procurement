@@ -2011,48 +2011,128 @@ export default function PRGenerator() {
       // Group bundle items together
       const groupedItems = groupBundleItems(pr.items);
 
-      // Build item rows with blank rows between bundle groups
-      const itemRows: any[] = [];
-      let itemNumber = 1;
+      // EXACT PDF PAGINATION LOGIC - 17 rows per page with smart row counting
+      const TOTAL_ROWS_PER_PAGE = 17;
+
+      // Helper function - calculate rows needed (matching PDF)
+      const calculateRowsNeeded = (item: any): number => {
+        const descriptionWidth = 35; // Excel column width in characters
+        const description = item.description || '';
+        const existingLines = description.split('\n');
+        let totalLines = 0;
+
+        for (const line of existingLines) {
+          if (!line.trim()) {
+            totalLines += 1;
+            continue;
+          }
+          const linesNeeded = Math.ceil(line.length / descriptionWidth);
+          totalLines += linesNeeded;
+        }
+
+        return Math.min(Math.max(1, totalLines), 3); // Min 1, max 3 rows
+      };
+
+      // Smart chunking - fit items into pages based on row requirements (matching PDF)
+      const itemChunks: any[][] = [];
+      let currentChunk: any[] = [];
+      let currentRowCount = 0;
       let previousBundleGroup = '';
 
-      groupedItems.forEach((item, index) => {
-        // Determine the bundle group (main item part number + description)
+      for (let i = 0; i < groupedItems.length; i++) {
+        const item = groupedItems[i];
+        const rowsNeeded = calculateRowsNeeded(item);
+
         const currentBundleGroup = item.isAccessory
           ? item.mainItemPartNumber || ''
           : `${item.partNumber}|||${item.description}`;
 
-        // Add blank row ONLY when we encounter a NEW main item (not accessories)
-        if (!item.isAccessory && index > 0 && previousBundleGroup !== '' && currentBundleGroup !== previousBundleGroup) {
-          itemRows.push([]); // Blank row between bundle groups
+        let totalRowsNeeded = rowsNeeded;
+
+        // Add 1 row for blank row if this is a new bundle group
+        if (!item.isAccessory && currentChunk.length > 0 && previousBundleGroup !== '' && currentBundleGroup !== previousBundleGroup) {
+          totalRowsNeeded += 1;
         }
 
-        // Calculate bundle totals for this item
-        const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(pr.items);
-        const bundleKey = createBundleKey(item, pr.items, index);
+        // Check if adding this item would exceed the page limit
+        if (currentRowCount + totalRowsNeeded > TOTAL_ROWS_PER_PAGE && currentChunk.length > 0) {
+          itemChunks.push(currentChunk);
+          currentChunk = [];
+          currentRowCount = 0;
+          previousBundleGroup = '';
+        }
 
-        const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === index;
-        const totalQuantity = isFirstOccurrence ? (bundleTotals.get(bundleKey) || 0) : '';
-        const unitPrice = isFirstOccurrence ? (item.unitPrice || 0).toFixed(2) : '';
+        currentChunk.push({ ...item, rowsNeeded });
+        currentRowCount += totalRowsNeeded;
 
-        itemRows.push([
-          itemNumber++,                 // Item
-          item.drawingNumber || '',     // Drawing No.
-          item.revision || '',          // Rev
-          item.description,            // Description (full text)
-          item.supplier,               // Maker (full text)
-          item.partNumber,             // Model/Part No. (full text)
-          item.quantity,               // Sub (Quantity)
-          totalQuantity,               // Total (bundle total on first occurrence only)
-          unitPrice,                   // Unit Price (only on first occurrence)
-          '',                          // Date Required
-          item.remarks || ''           // Remarks (full text)
-        ]);
-
-        // Update previous bundle group only when we see a main item
         if (!item.isAccessory) {
           previousBundleGroup = currentBundleGroup;
         }
+      }
+
+      if (currentChunk.length > 0) {
+        itemChunks.push(currentChunk);
+      }
+
+      // Build item rows with proper pagination
+      const itemRows: any[] = [];
+      let itemNumber = 1;
+
+      itemChunks.forEach((pageItems, pageIndex) => {
+        let pagePreviousBundleGroup = '';
+
+        // Get previous bundle group from last page
+        if (pageIndex > 0 && itemChunks[pageIndex - 1].length > 0) {
+          for (let i = itemChunks[pageIndex - 1].length - 1; i >= 0; i--) {
+            const prevItem = itemChunks[pageIndex - 1][i];
+            if (!prevItem.isAccessory) {
+              pagePreviousBundleGroup = `${prevItem.partNumber}|||${prevItem.description}`;
+              break;
+            }
+          }
+        }
+
+        pageItems.forEach((item, index) => {
+          const currentBundleGroup = item.isAccessory
+            ? item.mainItemPartNumber || ''
+            : `${item.partNumber}|||${item.description}`;
+
+          const isFirstItemOnPage = index === 0;
+          const shouldAddBlankRow = !item.isAccessory &&
+                                    (index > 0 || (isFirstItemOnPage && pageIndex > 0)) &&
+                                    pagePreviousBundleGroup !== '' &&
+                                    currentBundleGroup !== pagePreviousBundleGroup;
+
+          if (shouldAddBlankRow) {
+            itemRows.push([]);
+          }
+
+          if (!item.isAccessory) {
+            pagePreviousBundleGroup = currentBundleGroup;
+          }
+
+          const { bundleTotals, firstOccurrenceIndex } = calculateBundleTotals(groupedItems);
+          const globalIndex = itemChunks.slice(0, pageIndex).reduce((sum, chunk) => sum + chunk.length, 0) + index;
+          const bundleKey = createBundleKey(item, groupedItems, globalIndex);
+
+          const isFirstOccurrence = firstOccurrenceIndex.get(bundleKey) === globalIndex;
+          const totalQuantity = isFirstOccurrence ? (bundleTotals.get(bundleKey) || 0) : '';
+          const unitPrice = isFirstOccurrence ? (item.unitPrice || 0).toFixed(2) : '';
+
+          itemRows.push([
+            itemNumber++,
+            item.drawingNumber || '',
+            item.revision || '',
+            item.description,
+            item.supplier,
+            item.partNumber,
+            item.quantity,
+            totalQuantity,
+            unitPrice,
+            '',
+            item.remarks || ''
+          ]);
+        });
       });
 
       // Create PR data matching PDF template format
@@ -2084,26 +2164,34 @@ export default function PRGenerator() {
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.aoa_to_sheet(prData);
 
-      // Set column widths matching PDF template layout
       const colWidths = [
-        { wch: 6 },   // Item
-        { wch: 12 },  // Drawing No.
-        { wch: 6 },   // Rev
-        { wch: 35 },  // Description
-        { wch: 12 },  // Maker
-        { wch: 18 },  // Model / Part No.
-        { wch: 6 },   // Sub (Quantity)
-        { wch: 8 },   // Total
-        { wch: 12 },  // Unit Price
-        { wch: 12 },  // Date Required
-        { wch: 15 }   // Remarks
+        { wch: 6 },
+        { wch: 12 },
+        { wch: 6 },
+        { wch: 35 },
+        { wch: 12 },
+        { wch: 18 },
+        { wch: 6 },
+        { wch: 8 },
+        { wch: 12 },
+        { wch: 12 },
+        { wch: 15 }
       ];
       ws['!cols'] = colWidths;
 
-      // Add worksheet to workbook
+      // Set page setup for landscape and page breaks
+      ws['!margins'] = { left: 0.7, right: 0.7, top: 0.75, bottom: 0.75, header: 0.3, footer: 0.3 };
+      ws['!pageSetup'] = {
+        paperSize: 9, // A4
+        orientation: 'landscape',
+        scale: 100,
+        fitToWidth: 1,
+        fitToHeight: 0,
+        fitToPage: true
+      };
+
       XLSX.utils.book_append_sheet(wb, ws, 'Purchase Requisition');
 
-      // Generate and download file
       const fileName = `${pr.prNumber}_${pr.supplier.replace(/[^a-zA-Z0-9]/g, '_')}.xlsx`;
       XLSX.writeFile(wb, fileName);
     } catch (error) {
