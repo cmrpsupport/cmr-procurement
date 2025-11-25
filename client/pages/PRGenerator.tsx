@@ -453,7 +453,7 @@ export default function PRGenerator() {
           let drawingNumber: string | undefined;
           let revision: string | undefined;
 
-          // Method 0: Priority search for "Subcontractor Document Number" label first
+          // Method 0: Priority search for "Subcontractor Document Number" or "Doc. No." label first
           for (let i = 0; i < jsonData.length && !drawingNumber; i++) {
             const row = jsonData[i];
             if (!row || row.length === 0) continue;
@@ -464,8 +464,8 @@ export default function PRGenerator() {
 
               const cellStr = cell.toString().trim();
 
-              // Priority: Look for "Subcontractor Document Number" label
-              if (/subcontractor\s+document\s+number/i.test(cellStr)) {
+              // Priority: Look for "Subcontractor Document Number" or "Doc. No." label
+              if (/subcontractor\s+document\s+number/i.test(cellStr) || /^doc\.?\s*no\.?$/i.test(cellStr)) {
 
                 // Look for the value in the same cell first (after the colon)
                 const colonMatch = cellStr.match(/subcontractor\s+document\s+number\s*:\s*(.+)/i);
@@ -474,6 +474,17 @@ export default function PRGenerator() {
                   if (isValidDrawingNumber(candidate) && !isSymbolNumber(candidate, row, j)) {
                     drawingNumber = candidate;
                     break;
+                  }
+                }
+
+                // Priority check: Look in the SAME column, NEXT row (common layout for "Doc. No." label)
+                if (!drawingNumber && i + 1 < jsonData.length) {
+                  const nextRow = jsonData[i + 1];
+                  if (nextRow && nextRow[j]) {
+                    const candidateValue = nextRow[j].toString().trim();
+                    if (candidateValue && isValidDrawingNumber(candidateValue) && !isSymbolNumber(candidateValue, nextRow, j)) {
+                      drawingNumber = candidateValue;
+                    }
                   }
                 }
 
@@ -1011,9 +1022,27 @@ export default function PRGenerator() {
 
           addItemToGroups(item);
           validItemsCount++;
-        } else if (maker && !partNumber && description) {
-          // Skip items with maker but no part number - they need manual review
-          skippedRowsCount++;
+        } else if (maker && description) {
+          // Item with maker but possibly no part number - still add it
+          const item: BOMItem = {
+            partNumber: partNumber || '',
+            supplier: maker,
+            description: description || 'No description',
+            quantity: qty,
+            symbol: symbol || '',
+            remarks,
+            unitPrice: 0,
+            rowIndex: i + headerRow + 2,
+            sheetName,
+            isAccessory: isAccessory,
+            mainItemPartNumber: isAccessory ? currentMainItemPartNumber : undefined,
+            drawingNumber: sheetDrawingInfo.drawingNumber,
+            revision: sheetDrawingInfo.revision
+          };
+          item.totalPrice = item.unitPrice! * item.quantity;
+
+          addItemToGroups(item);
+          validItemsCount++;
         } else {
           skippedRowsCount++;
         }
