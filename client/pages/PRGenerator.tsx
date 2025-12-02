@@ -488,7 +488,7 @@ export default function PRGenerator() {
                   }
                 }
 
-                // Expanded search: Look in a broader area around the label
+                // Expanded search: Look in a broader area around the label (but skip if already found above)
                 if (!drawingNumber) {
                   // Check next 5 rows and all columns for the drawing number
                   for (let searchRow = i + 1; searchRow <= Math.min(i + 5, jsonData.length - 1) && !drawingNumber; searchRow++) {
@@ -499,7 +499,7 @@ export default function PRGenerator() {
                       if (checkRow[searchCol]) {
                         const candidateValue = checkRow[searchCol].toString().trim();
 
-                        // Specifically look for the pattern 25006-001-04-02
+                        // Specifically look for the pattern 25006-001-04-02 or 25015-001-04-01
                         if (/^\d{5}-\d{3}-\d{2}-\d{2}$/.test(candidateValue)) {
                           drawingNumber = candidateValue;
                           break;
