@@ -431,6 +431,62 @@ export default function PRGenerator() {
         
 
         // Helper function to detect drawing number and revision from footer
+        // Detect all drawing numbers in a sheet with their row positions
+        const detectAllDrawingInfo = (jsonData: any[][]): Array<{ drawingNumber?: string, revision?: string, rowIndex: number }> => {
+          const allDrawings: Array<{ drawingNumber?: string, revision?: string, rowIndex: number }> = [];
+
+          // Search for all "Doc. No." or "Subcontractor Document Number" labels
+          for (let i = 0; i < jsonData.length; i++) {
+            const row = jsonData[i];
+            if (!row || row.length === 0) continue;
+
+            for (let j = 0; j < row.length; j++) {
+              const cell = row[j];
+              if (!cell) continue;
+              const cellStr = cell.toString().trim();
+
+              // Look for drawing number labels
+              if (/subcontractor\s+document\s+number/i.test(cellStr) || /^doc\.?\s*no\.?$/i.test(cellStr)) {
+                let drawingNumber: string | undefined;
+                let revision: string | undefined;
+
+                // Check same column, next row first
+                if (i + 1 < jsonData.length) {
+                  const nextRow = jsonData[i + 1];
+                  if (nextRow && nextRow[j]) {
+                    const candidateValue = nextRow[j].toString().trim();
+                    if (candidateValue && /^\d{5}-\d{3}-\d{2}-\d{2}$/.test(candidateValue)) {
+                      drawingNumber = candidateValue;
+                    }
+                  }
+
+                  // Check for revision in same row, different column
+                  for (let k = 0; k < nextRow.length; k++) {
+                    if (nextRow[k]) {
+                      const revText = nextRow[k].toString().trim();
+                      const revMatch = revText.match(/REV\.?\s*([A-Z0-9]+)/i);
+                      if (revMatch && revMatch[1]) {
+                        let rev = revMatch[1].toUpperCase();
+                        if (/^\d{1}$/.test(rev)) {
+                          rev = rev.padStart(2, '0');
+                        }
+                        revision = rev;
+                        break;
+                      }
+                    }
+                  }
+                }
+
+                if (drawingNumber) {
+                  allDrawings.push({ drawingNumber, revision, rowIndex: i });
+                }
+              }
+            }
+          }
+
+          return allDrawings;
+        };
+
         const detectDrawingInfo = (jsonData: any[][], sheetName: string): { drawingNumber?: string, revision?: string } => {
           // Find the last row with BOM data
           let lastBOMRow = -1;
@@ -843,9 +899,12 @@ export default function PRGenerator() {
         for (const sheetInfo of validSheets) {
           const { sheetName, jsonData, headerInfo } = sheetInfo;
           const { headerRow, headers } = headerInfo;
-          
+
+          // Detect ALL drawing numbers in this sheet with their positions
+          const allDrawingsInSheet = detectAllDrawingInfo(jsonData);
+
           let sheetDrawingInfo = allDrawingNumbers[sheetName] || {};
-          
+
           if (!sheetDrawingInfo.drawingNumber) {
             // Try to assign different drawings to different sheets intelligently
             const sheetIndex = validSheets.findIndex(s => s.sheetName === sheetName);
@@ -856,6 +915,25 @@ export default function PRGenerator() {
               sheetDrawingInfo = fallbackDrawing;
             }
           }
+
+          // Helper function to get drawing number for a specific row
+          const getDrawingInfoForRow = (rowIndex: number): { drawingNumber?: string, revision?: string } => {
+            if (allDrawingsInSheet.length === 0) {
+              return sheetDrawingInfo;
+            }
+
+            // Find the most recent drawing number before this row
+            let applicableDrawing = allDrawingsInSheet[0];
+            for (const drawing of allDrawingsInSheet) {
+              if (drawing.rowIndex < rowIndex) {
+                applicableDrawing = drawing;
+              } else {
+                break;
+              }
+            }
+
+            return applicableDrawing;
+          };
 
           if (jsonData.length < headerRow + 2) {
             continue;
@@ -977,6 +1055,9 @@ export default function PRGenerator() {
           currentMainItemPartNumber = partNumber;
 
           // Now create the BOM item with the potentially merged description
+          const actualRowIndex = headerRow + 1 + i; // Actual row in jsonData
+          const itemDrawingInfo = getDrawingInfoForRow(actualRowIndex);
+
           const item: BOMItem = {
             partNumber,
             supplier: maker,
@@ -989,8 +1070,8 @@ export default function PRGenerator() {
             sheetName,
             isAccessory: false,
             mainItemPartNumber: undefined,
-            drawingNumber: sheetDrawingInfo.drawingNumber,
-            revision: sheetDrawingInfo.revision
+            drawingNumber: itemDrawingInfo.drawingNumber,
+            revision: itemDrawingInfo.revision
           };
           item.totalPrice = item.unitPrice! * item.quantity;
           
@@ -1002,6 +1083,8 @@ export default function PRGenerator() {
           i = nextRowIndex - 1; // -1 because the for loop will increment
         } else if (isAccessory && maker && partNumber) {
           // This is an accessory with its own part number and maker
+          const actualRowIndex = headerRow + 1 + i;
+          const itemDrawingInfo = getDrawingInfoForRow(actualRowIndex);
 
           const item: BOMItem = {
             partNumber,
@@ -1015,8 +1098,8 @@ export default function PRGenerator() {
             sheetName,
             isAccessory: true,
             mainItemPartNumber: currentMainItemPartNumber,
-            drawingNumber: sheetDrawingInfo.drawingNumber,
-            revision: sheetDrawingInfo.revision
+            drawingNumber: itemDrawingInfo.drawingNumber,
+            revision: itemDrawingInfo.revision
           };
           item.totalPrice = item.unitPrice! * item.quantity;
 
@@ -1024,6 +1107,9 @@ export default function PRGenerator() {
           validItemsCount++;
         } else if (maker && description) {
           // Item with maker but possibly no part number - still add it
+          const actualRowIndex = headerRow + 1 + i;
+          const itemDrawingInfo = getDrawingInfoForRow(actualRowIndex);
+
           const item: BOMItem = {
             partNumber: partNumber || '',
             supplier: maker,
@@ -1036,8 +1122,8 @@ export default function PRGenerator() {
             sheetName,
             isAccessory: isAccessory,
             mainItemPartNumber: isAccessory ? currentMainItemPartNumber : undefined,
-            drawingNumber: sheetDrawingInfo.drawingNumber,
-            revision: sheetDrawingInfo.revision
+            drawingNumber: itemDrawingInfo.drawingNumber,
+            revision: itemDrawingInfo.revision
           };
           item.totalPrice = item.unitPrice! * item.quantity;
 
