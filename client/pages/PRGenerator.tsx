@@ -922,17 +922,15 @@ export default function PRGenerator() {
               return sheetDrawingInfo;
             }
 
-            // Find the most recent drawing number before this row
-            let applicableDrawing = allDrawingsInSheet[0];
+            // Find the NEXT drawing number after this row (drawing numbers appear below their sections)
             for (const drawing of allDrawingsInSheet) {
-              if (drawing.rowIndex < rowIndex) {
-                applicableDrawing = drawing;
-              } else {
-                break;
+              if (drawing.rowIndex > rowIndex) {
+                return drawing;
               }
             }
 
-            return applicableDrawing;
+            // If no drawing found after this row, use the last one
+            return allDrawingsInSheet[allDrawingsInSheet.length - 1];
           };
 
           if (jsonData.length < headerRow + 2) {
