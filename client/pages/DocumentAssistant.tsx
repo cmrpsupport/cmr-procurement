@@ -247,7 +247,7 @@ export default function DocumentAssistant() {
     }
   };
 
-  // All OCR processing is now done server-side with OCR.space API
+  // All OCR processing is now done server-side with Tesseract OCR
   // No client-side Tesseract or PDF processing needed
 
   const handleFileSelect = useCallback((files: File[]) => {
@@ -362,7 +362,7 @@ export default function DocumentAssistant() {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minute timeout
 
-        updateProgress(0.5, 1, "Server processing with OCR.space...", startTime, 'backend');
+        updateProgress(0.5, 1, "Server processing with Tesseract OCR...", startTime, 'backend');
 
         response = await fetch("/api/process-document", {
           method: "POST",

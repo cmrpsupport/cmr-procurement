@@ -13,77 +13,17 @@ interface OCRResult {
 }
 
 /**
- * Detect and crop barcode region from the right side of the image
- * Barcodes typically have high-frequency vertical patterns
- */
-async function detectAndCropBarcode(inputPath: string): Promise<string> {
-  try {
-    console.log(`  🔍 Detecting barcode region...`);
-
-    const image = sharp(inputPath);
-    const metadata = await image.metadata();
-    const width = metadata.width || 0;
-    const height = metadata.height || 0;
-
-    if (width === 0 || height === 0) {
-      console.log(`  ⚠️ Could not get image dimensions, skipping barcode detection`);
-      return inputPath;
-    }
-
-    // Strategy: Crop out the right 35% of the image where barcodes typically appear
-    // Keep the left 65% which contains the actual document data
-    const cropWidth = Math.floor(width * 0.65);
-    const croppedPath = inputPath.replace(/\.[^.]+$/, '_cropped.png');
-
-    await sharp(inputPath)
-      .extract({
-        left: 0,
-        top: 0,
-        width: cropWidth,
-        height: height
-      })
-      .png()
-      .toFile(croppedPath);
-
-    console.log(`  ✅ Cropped barcode region (kept left 65%, removed right 35%)`);
-    return croppedPath;
-  } catch (error) {
-    console.error('  ❌ Barcode cropping failed:', error);
-    return inputPath;
-  }
-}
-
-/**
- * Preprocess image for better OCR accuracy - DISABLED
- * Simple preprocessing causes better results than complex processing
- */
-async function preprocessImage(inputPath: string): Promise<string> {
-  // Preprocessing disabled - Tesseract works better with original high-res images
-  console.log(`  ℹ️ Using original image (preprocessing disabled for better quality)`);
-  return inputPath;
-}
-
-/**
- * Process a single image with Tesseract.js (with preprocessing)
+ * Process a single image with Tesseract.js
+ * Note: Preprocessing disabled - Tesseract works better with original high-res images
  */
 export async function processWithOCRSpace(
   filePath: string,
   mimeType: string = 'image/png',
   language: string = 'eng'
 ): Promise<OCRResult> {
-  let preprocessedPath: string | null = null;
-
   try {
     console.log(`📸 Processing file with Tesseract.js: ${path.basename(filePath)} (${mimeType})`);
-
-    // Only preprocess images, not PDFs (Tesseract handles PDFs directly)
-    let fileToProcess = filePath;
-    if (mimeType.startsWith('image/')) {
-      preprocessedPath = await preprocessImage(filePath);
-      fileToProcess = preprocessedPath;
-    } else {
-      console.log('  📄 PDF file - skipping preprocessing, using direct Tesseract processing');
-    }
+    console.log('  ℹ️ Using original image (preprocessing disabled for better quality)');
 
     // Create Tesseract worker with optimized settings
     const worker = await createWorker(language, 1, {
@@ -97,14 +37,12 @@ export async function processWithOCRSpace(
     // Set Tesseract parameters for better accuracy
     await worker.setParameters({
       tessedit_pageseg_mode: '1',  // Automatic page segmentation with OSD
-      tessedit_ocr_engine_mode: '1', // Neural nets LSTM engine only
-      tessedit_char_whitelist: '',  // Allow all characters
       preserve_interword_spaces: '1', // Preserve spacing
     });
 
     // Perform OCR
     console.log('  🔍 Running Tesseract OCR recognition...');
-    const { data } = await worker.recognize(fileToProcess);
+    const { data } = await worker.recognize(filePath);
 
     // Clean up worker
     await worker.terminate();
@@ -121,16 +59,6 @@ export async function processWithOCRSpace(
   } catch (error) {
     console.error('❌ Tesseract OCR error:', error);
     throw error;
-  } finally {
-    // Clean up preprocessed file
-    if (preprocessedPath && preprocessedPath !== filePath && fs.existsSync(preprocessedPath)) {
-      try {
-        fs.unlinkSync(preprocessedPath);
-        console.log('  🧹 Cleaned up preprocessed file');
-      } catch (err) {
-        console.warn('  ⚠️ Could not delete preprocessed file:', err);
-      }
-    }
   }
 }
 
