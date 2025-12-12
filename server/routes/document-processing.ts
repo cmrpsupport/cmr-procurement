@@ -1185,9 +1185,13 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
           ...extractedData,
           documentType: "image_ocr",
           confidence: extractionConfidence, // Use extraction confidence, not OCR confidence
+          // Add quality warning if OCR confidence is high but no data extracted
+          qualityWarning: (confidence > 0.6 && !extractedData.supplier && !extractedData.poNumber && !extractedData.doNumber)
+            ? "Poor scan quality - OCR detected text but could not extract data. Please use a higher quality scan."
+            : undefined,
           rawData: {
             originalText: text,
-            ocrMethod: "ocr.space",
+            ocrMethod: "tesseract",
             fileName: req.file.originalname,
             fileSize: req.file.size,
             ocrConfidence: confidence // Store OCR confidence separately
@@ -1212,9 +1216,9 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
       return res.json(result);
     }
     
-    // Handle PDF files with OCR.space
+    // Handle PDF files with Tesseract OCR
     if (req.file.mimetype === 'application/pdf') {
-      console.log("📄 PROCESSING PDF FILE WITH OCR.SPACE");
+      console.log("📄 PROCESSING PDF FILE WITH TESSERACT OCR");
       console.log("File path:", req.file.path);
       console.log("File name:", req.file.originalname);
 
@@ -1255,9 +1259,13 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
               documentType: pageResults.length > 1 ? "pdf_multipage" : "pdf_ocr",
               confidence: pageResult.confidence,
               pageCount: pageCount,
+              // Add quality warning if OCR confidence is high but no data extracted
+              qualityWarning: (pageResult.confidence > 0.6 && !extractedData.supplier && !extractedData.poNumber && !extractedData.doNumber)
+                ? "Poor scan quality - OCR detected text but could not extract data. Please use a higher quality scan."
+                : undefined,
               rawData: {
                 originalText: pageResult.text,
-                ocrMethod: "ocr.space",
+                ocrMethod: "tesseract",
                 fileName: req.file.originalname,
                 fileSize: req.file.size,
                 pageCount: pageCount,

@@ -431,7 +431,9 @@ export default function DocumentAssistant() {
               fileAnalysis: `File: ${docResult.originalName} (${(file.size / 1024).toFixed(1)} KB)`,
               templateUsed: `Page ${docResult.extractedData?.rawData?.pageIndex || 1} from Multi-page PDF`,
               processingMethod: 'Multi-Page Document Processing',
-              confidence: docResult.extractedData?.confidence ? `${(docResult.extractedData.confidence * 100).toFixed(1)}%` : 'N/A'
+              confidence: docResult.extractedData?.qualityWarning
+                ? docResult.extractedData.qualityWarning
+                : (docResult.extractedData?.confidence ? `${(docResult.extractedData.confidence * 100).toFixed(1)}%` : 'N/A')
             };
             
             processedResults.push(enhancedDocument);
@@ -466,7 +468,9 @@ export default function DocumentAssistant() {
             fileAnalysis: `File: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`,
             templateUsed: document.extractedData?.pageCount > 1 ? 'Multi-page Document' : 'Single Page Document',
             processingMethod: file.type.startsWith('image/') ? 'Image Processing' : 'Document Processing',
-            confidence: document.extractedData?.confidence ? `${(document.extractedData.confidence * 100).toFixed(1)}%` : 'N/A'
+            confidence: document.extractedData?.qualityWarning
+              ? document.extractedData.qualityWarning
+              : (document.extractedData?.confidence ? `${(document.extractedData.confidence * 100).toFixed(1)}%` : 'N/A')
           };
           
           processedResults.push(enhancedDocument);
