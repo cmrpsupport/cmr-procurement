@@ -1359,19 +1359,30 @@ router.get('/documents/:id/download', async (req, res) => {
       return res.status(404).json({ error: 'Document not found' });
     }
     
-    // Generate CSV content with professional format (extracted data only)
+    // Generate CSV content with improved professional format
     const csvData: string[][] = [
+      // Header section with document info
+      ['DELIVERY ORDER SUMMARY'],
+      ['Generated', new Date().toLocaleString('en-SG', { timeZone: 'Asia/Singapore' })],
+      ['Document Name', document.originalName || 'N/A'],
+      [''],
+
+      // Document details section
+      ['DOCUMENT INFORMATION'],
+      ['Field', 'Value'],
       ['Supplier Name', document.supplier || 'Not found'],
       ['PO Number', document.poNumber || 'Not found'],
       ['PR Number', document.prNumber || 'Not found'],
+      ['DO Number', document.doNumber || document.extractedData?.deliveryNumber || 'Not found'],
       ['Project Number', document.projectNumber || 'Not found'],
       ['Job Number', document.jobNumber || 'Not found'],
-      ['DO Number', document.doNumber || document.extractedData?.deliveryNumber || 'Not found'],
       ['Date', document.date || 'Not found'],
       ['Delivery Date', document.extractedData?.deliveryDate || 'Not found'],
       [''],
-      ['Items Delivered'],
-      ['Total Items Found', document.extractedData?.items?.length?.toString() || '0'],
+
+      // Items section
+      ['ITEMS DELIVERED'],
+      ['Total Items', document.extractedData?.items?.length?.toString() || '0'],
       ['']
     ];
 
@@ -1382,10 +1393,11 @@ router.get('/documents/:id/download', async (req, res) => {
       const isObjectFormat = typeof firstItem === 'object';
 
       if (isObjectFormat) {
-        // New format with parsed data
-        csvData.push(['S/N', 'Part Number', 'Description', 'Quantity', 'UOM']);
-        document.extractedData.items.forEach((item: any) => {
+        // New format with structured columns
+        csvData.push(['No.', 'S/N', 'Part Number', 'Description', 'Quantity', 'UOM']);
+        document.extractedData.items.forEach((item: any, index: number) => {
           csvData.push([
+            (index + 1).toString(),
             item.sn || '',
             item.partNumber || '',
             item.description || '',
@@ -1395,7 +1407,7 @@ router.get('/documents/:id/download', async (req, res) => {
         });
       } else {
         // Old format - just raw strings
-        csvData.push(['#', 'Item Description']);
+        csvData.push(['No.', 'Item Description']);
         document.extractedData.items.forEach((item: string, index: number) => {
           csvData.push([(index + 1).toString(), item]);
         });
@@ -1403,6 +1415,11 @@ router.get('/documents/:id/download', async (req, res) => {
     } else {
       csvData.push(['No items found']);
     }
+
+    // Footer section
+    csvData.push(['']);
+    csvData.push(['END OF DOCUMENT']);
+    csvData.push(['Processed by CMR Procurement System']);
 
     const csvContent = csvData.map(row =>
       row.map(field => `"${field}"`).join(',')
