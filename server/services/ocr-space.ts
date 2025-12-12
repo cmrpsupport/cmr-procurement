@@ -2,10 +2,7 @@ import { createWorker } from 'tesseract.js';
 import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
-import { promisify } from 'util';
-import { exec as execCallback } from 'child_process';
-
-const exec = promisify(execCallback);
+import { pdfToPng } from 'pdf-to-png-converter';
 
 interface OCRResult {
   text: string;
@@ -63,28 +60,30 @@ export async function processWithOCRSpace(
 }
 
 /**
- * Convert PDF page to PNG using ImageMagick
+ * Convert PDF page to PNG using pure Node.js library (no ImageMagick required)
  */
 async function convertPDFPageToPNG(pdfPath: string, pageNumber: number): Promise<string> {
   try {
-    console.log(`  🖼️ Converting PDF page ${pageNumber} to PNG using ImageMagick...`);
+    console.log(`  🖼️ Converting PDF page ${pageNumber} to PNG using pdf-to-png-converter...`);
 
     const outputPath = `${pdfPath}_page_${pageNumber}.png`;
-    const pageIndex = pageNumber - 1; // ImageMagick uses 0-based indexing
 
-    // Use ImageMagick with enhanced settings for OCR
-    // -density 600: Very high resolution for crisp text
-    // -quality 100: Maximum quality
-    // -colorspace Gray: Convert to grayscale immediately
-    // -type Grayscale: Ensure grayscale output
-    const command = `magick -density 600 "${pdfPath}[${pageIndex}]" -colorspace Gray -type Grayscale -quality 100 "${outputPath}"`;
+    // Convert specific page from PDF to PNG
+    const pngPages = await pdfToPng(pdfPath, {
+      disableFontFace: false,
+      useSystemFonts: false,
+      viewportScale: 2.0,
+      pagesToProcess: [pageNumber],
+      strictPagesToProcess: false,
+      verbosityLevel: 0
+    });
 
-    console.log(`  🔧 Running: ${command}`);
-    await exec(command);
-
-    if (!fs.existsSync(outputPath)) {
-      throw new Error(`PNG file was not created: ${outputPath}`);
+    if (!pngPages || pngPages.length === 0) {
+      throw new Error(`Failed to convert PDF page ${pageNumber}`);
     }
+
+    // Save the PNG buffer to file
+    fs.writeFileSync(outputPath, pngPages[0].content);
 
     console.log(`  ✅ PDF page converted to PNG: ${path.basename(outputPath)}`);
     return outputPath;
@@ -95,13 +94,13 @@ async function convertPDFPageToPNG(pdfPath: string, pageNumber: number): Promise
 }
 
 /**
- * Process a PDF file with Tesseract (converts to PNG first using ImageMagick)
+ * Process a PDF file with Tesseract (converts to PNG first using pdf-to-png-converter)
  */
 export async function processPDFWithOCRSpace(
   filePath: string,
   pageCount: number
 ): Promise<{ text: string; pageNumber: number; confidence: number }[]> {
-  console.log(`📄 Processing PDF with ${pageCount} pages using Tesseract + ImageMagick`);
+  console.log(`📄 Processing PDF with ${pageCount} pages using Tesseract + pdf-to-png-converter`);
 
   const results = [];
 
