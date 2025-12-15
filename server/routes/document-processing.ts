@@ -4,6 +4,13 @@ import path from 'path';
 import fs from 'fs';
 import { saveDocument, getAllDocuments, getDocumentById, deleteDocument } from '../database';
 import { processWithOCRSpace, processPDFWithOCRSpace } from '../services/ocr-space';
+import {
+  validateSupplierName,
+  validatePONumber,
+  validateDate,
+  calculateExtractionConfidence,
+  cleanExtractedText
+} from '../services/extraction-enhancements.js';
 
 const router = express.Router();
 
@@ -104,8 +111,13 @@ const extractSimpleData = (text: string) => {
     if (result.supplier === "Not found") {
       console.log("  🔍 Trying to extract supplier from full text patterns...");
       const companyPatterns = [
-        /([A-Z][A-Z\s&]+(?:SUPPLY|INDUSTRIAL|TRADING|ENGINEERING)[\sA-Z&]*(?:CO\.?|COMPANY)?\s*(?:PTE\.?\s*LTD|PTELtd|Ltd|Limited))/i,
-        /\b([A-Z][A-Za-z\s&]+(?:Pte\.?\s*Ltd|PTELTD|Ltd|Limited|Corporation|Corp|Inc))\b/gi,
+        // Handle OCR variations: PTE LTD, PTELTD, PteLtd, Pte Ltd, etc.
+        /([A-Z][A-Z\s&]+(?:SUPPLY|INDUSTRIAL|TRADING|ENGINEERING)[\sA-Z&]*(?:CO\.?|COMPANY)?\s*(?:PTE\.?\s*LTD|PTELtd|PTELTD|Ltd|Limited))/i,
+        /\b([A-Z][A-Za-z\s&]+(?:Pte\.?\s*Ltd|PTELTD|PteLtd|Ptc\.?\s*Ltd|Ple\.?\s*Ltd|Ltd|Limited|Corporation|Corp|Inc))\b/gi,
+        // Handle "PTE. LTD" with extra spaces or dots
+        /\b([A-Z][A-Za-z\s&]+(?:PTE\s*\.?\s*LT[DO]|PTELtd|PTELTD))\b/gi,
+        // Specific industry patterns
+        /\b([A-Z][A-Za-z\s&]*(?:Electronic|Electronics|Engineering|Trading|Supply|Supplies|Services?|Solutions|International|Global)\s+[A-Z][A-Za-z\s&]*(?:Pte\.?\s*Ltd|Ltd))\b/i,
       ];
 
       for (const pattern of companyPatterns) {
@@ -1033,8 +1045,55 @@ const extractSimpleData = (text: string) => {
   console.log(`📊 CONFIDENCE: ${(confidence * 100).toFixed(1)}% (${foundFields}/8 fields, ${criticalFound}/4 critical)`);
   console.log(`   Critical fields (70%): ${(criticalScore * 100).toFixed(1)}%`);
   console.log(`   Optional fields (30%): ${(optionalScore * 100).toFixed(1)}%`);
+
+  // VALIDATION STEP: Validate extracted data quality
+  console.log("\n🔍 === VALIDATION STEP ===");
+
+  // Validate supplier
+  if (result.supplier !== "Not found") {
+    const supplierValidation = validateSupplierName(result.supplier);
+    console.log(`✓ Supplier validation: ${(supplierValidation.confidence * 100).toFixed(1)}% confidence`);
+    if (supplierValidation.issues.length > 0) {
+      console.log(`  ⚠️ Issues: ${supplierValidation.issues.join(', ')}`);
+    }
+    if (!supplierValidation.valid) {
+      console.log(`  ❌ Supplier failed validation, resetting to "Not found"`);
+      result.supplier = "Not found";
+    }
+  }
+
+  // Validate PO number
+  if (result.poNumber !== "Not found") {
+    const poValidation = validatePONumber(result.poNumber);
+    console.log(`✓ PO Number validation: ${(poValidation.confidence * 100).toFixed(1)}% confidence`);
+    if (poValidation.issues.length > 0) {
+      console.log(`  ⚠️ Issues: ${poValidation.issues.join(', ')}`);
+    }
+    if (!poValidation.valid) {
+      console.log(`  ❌ PO Number failed validation, resetting to "Not found"`);
+      result.poNumber = "Not found";
+    }
+  }
+
+  // Validate date
+  if (result.date !== "Not found") {
+    const dateValidation = validateDate(result.date);
+    console.log(`✓ Date validation: ${(dateValidation.confidence * 100).toFixed(1)}% confidence`);
+    if (dateValidation.issues.length > 0) {
+      console.log(`  ⚠️ Issues: ${dateValidation.issues.join(', ')}`);
+    }
+    if (!dateValidation.valid) {
+      console.log(`  ❌ Date failed validation, resetting to "Not found"`);
+      result.date = "Not found";
+    }
+  }
+
+  // Calculate overall extraction confidence
+  const extractionConfidence = calculateExtractionConfidence(result);
+  console.log(`📊 Overall Extraction Quality: ${(extractionConfidence * 100).toFixed(1)}%`);
+
   console.log("===========================\n");
-  
+
   return result;
 };
 
@@ -1474,16 +1533,20 @@ router.patch('/documents/:id', async (req, res) => {
       if (document.projectNumber && document.projectNumber !== "Not found") optionalScore += 0.10;
       if (document.jobNumber && document.jobNumber !== "Not found") optionalScore += 0.10;
       if (document.extractedData.items && document.extractedData.items.length > 0) optionalScore += 0.10;
-      
-      document.extractedData.confidence = criticalScore + optionalScore;
+
+      (document.extractedData as any).confidence = criticalScore + optionalScore;
     }
     
     // Update renamed file name based on new data
     document.renamedName = `${document.supplier || "Unknown"}_${document.poNumber || "Unknown"}_${document.originalName}`;
     
     // Save updated document (you'll need to add an updateDocument function)
-    const { default: Database } = await import('../database.js');
-    const db = await Database.getDatabase();
+    const { getDatabase } = await import('../database.js');
+    const dbInstance = await getDatabase();
+    if (!('prepare' in dbInstance)) {
+      throw new Error('Prepare not supported with remote database');
+    }
+    const db = dbInstance as any;
     
     db.prepare(`
       UPDATE documents 

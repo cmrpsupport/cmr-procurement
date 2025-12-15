@@ -15,7 +15,10 @@ interface DocumentRow {
   status: string;
   supplier: string | null;
   po_number: string | null;
+  pr_number: string | null;
   project_number: string | null;
+  job_number: string | null;
+  do_number: string | null;
   date: string | null;
   delivery_date: string | null;
   total_amount: string | null;
@@ -246,8 +249,15 @@ const createTables = () => {
 // Document operations
 export const saveDocument = async (documentData: any) => {
   try {
-    const db = await getDatabase();
-    
+    const dbInstance = await getDatabase();
+
+    // Check if it's a local database (has transaction and prepare methods)
+    if (!('transaction' in dbInstance)) {
+      throw new Error('Transaction not supported with remote database');
+    }
+
+    const db = dbInstance as Database.Database;
+
     // Begin transaction
     const transaction = db.transaction((data: any) => {
       // Insert main document record
@@ -364,8 +374,12 @@ export const saveDocument = async (documentData: any) => {
 
 export const getAllDocuments = async () => {
   try {
-    const db = await getDatabase();
-    
+    const dbInstance = await getDatabase();
+    if (!('prepare' in dbInstance)) {
+      throw new Error('Prepare not supported with remote database');
+    }
+    const db = dbInstance as Database.Database;
+
     const query = db.prepare(`
       SELECT
         d.*,
@@ -474,7 +488,11 @@ export const getAllDocuments = async () => {
 
 export const getDocumentById = async (id: string) => {
   try {
-    const db = await getDatabase();
+    const dbInstance = await getDatabase();
+    if (!('prepare' in dbInstance)) {
+      throw new Error('Prepare not supported with remote database');
+    }
+    const db = dbInstance as Database.Database;
 
     const query = db.prepare(`
       SELECT
@@ -583,8 +601,12 @@ export const getDocumentById = async (id: string) => {
 
 export const deleteDocument = async (id: string) => {
   try {
-    const db = await getDatabase();
-    
+    const dbInstance = await getDatabase();
+    if (!('prepare' in dbInstance)) {
+      throw new Error('Prepare not supported with remote database');
+    }
+    const db = dbInstance as Database.Database;
+
     const deleteQuery = db.prepare('DELETE FROM documents WHERE id = ?');
     const result = deleteQuery.run(id);
     

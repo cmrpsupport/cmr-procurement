@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback, ErrorBoundary } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowLeft, 
@@ -63,12 +63,14 @@ interface Document {
   status: "Processing" | "Processed" | "Error";
   supplier: string;
   poNumber: string;
+  prNumber?: string;
   projectNumber: string;
   jobNumber: string;
   doNumber: string;
   extractedData: {
     supplier: string;
     poNumber: string;
+    prNumber?: string;
     projectNumber: string;
     jobNumber: string;
     doNumber: string;
@@ -77,6 +79,7 @@ interface Document {
     items?: string[];
     pageCount?: number;
     confidence?: number;
+    qualityWarning?: string;
   };
   fileSize: string;
   uploadTime: string;
@@ -331,13 +334,26 @@ export default function DocumentAssistant() {
         
         console.log(`Processing file ${i + 1}/${selectedFiles.length}:`, file.name);
 
-        // Update processing message based on file type with realistic time expectations
-        if (file.type.startsWith("image/")) {
-          setProcessingMessage(`Processing ${file.name}... (${i + 1}/${selectedFiles.length}) - Enhanced OCR for accurate data extraction`);
-        } else if (file.type === "application/pdf") {
-          setProcessingMessage(`Processing ${file.name}... (${i + 1}/${selectedFiles.length}) - Multi-page document processing may take several minutes`);
+        // Calculate initial time estimate for user expectation
+        const fileSizeForEstimate = file.size / (1024 * 1024); // MB
+        let initialEstimate = "";
+        if (file.type === "application/pdf") {
+          const estimatedSeconds = Math.ceil(60 + (fileSizeForEstimate * 10));
+          initialEstimate = estimatedSeconds > 60
+            ? `~${Math.ceil(estimatedSeconds / 60)} minute(s)`
+            : `~${estimatedSeconds} seconds`;
         } else {
-          setProcessingMessage(`Processing ${file.name}... (${i + 1}/${selectedFiles.length}) - Processing document for data extraction`);
+          const estimatedSeconds = Math.ceil(20 + (fileSizeForEstimate * 5));
+          initialEstimate = `~${estimatedSeconds} seconds`;
+        }
+
+        // Update processing message based on file type with time estimates
+        if (file.type.startsWith("image/")) {
+          setProcessingMessage(`Processing ${file.name}... (${i + 1}/${selectedFiles.length}) - Estimated time: ${initialEstimate}`);
+        } else if (file.type === "application/pdf") {
+          setProcessingMessage(`Processing ${file.name}... (${i + 1}/${selectedFiles.length}) - Estimated time: ${initialEstimate}`);
+        } else {
+          setProcessingMessage(`Processing ${file.name}... (${i + 1}/${selectedFiles.length}) - Estimated time: ${initialEstimate}`);
         }
 
         let response;
@@ -349,30 +365,94 @@ export default function DocumentAssistant() {
         const startTime = Date.now();
         setProcessingStartTime(startTime);
         setProcessingStage(`Uploading ${file.type.startsWith('image/') ? 'image' : 'PDF'} to server...`);
-        setProcessingProgress(10);
-        setEstimatedTimeRemaining("Processing...");
+        setProcessingProgress(5);
+
+        // Estimate time based on file type and size
+        const fileSizeMB = file.size / (1024 * 1024);
+        let estimatedTime = 0;
+
+        if (file.type === "application/pdf") {
+          // PDFs: ~30-60 seconds per page (estimate 2-3 pages average)
+          estimatedTime = 60000 + (fileSizeMB * 10000); // Base 60s + 10s per MB
+          setEstimatedTimeRemaining(`~${Math.ceil(estimatedTime / 1000)} seconds estimated`);
+        } else {
+          // Images: ~15-30 seconds
+          estimatedTime = 20000 + (fileSizeMB * 5000); // Base 20s + 5s per MB
+          setEstimatedTimeRemaining(`~${Math.ceil(estimatedTime / 1000)} seconds estimated`);
+        }
 
         const formData = new FormData();
         formData.append("document", file);
 
-        // Update progress during processing
-        updateProgress(0.3, 1, "Uploading to server...", startTime, 'backend');
+        // Simulate progress updates during server processing
+        // Use a slower progression curve to avoid jumping to 100%
+        const progressInterval = setInterval(() => {
+          const elapsed = Date.now() - startTime;
+
+          // Use logarithmic curve instead of linear to slow down as we approach the end
+          // This makes progress smoother and less likely to jump
+          let estimatedProgress = (elapsed / estimatedTime) * 100;
+
+          // Apply smoothing curve (progress slows down as it gets higher)
+          if (estimatedProgress > 50) {
+            // After 50%, slow down progression
+            const overage = estimatedProgress - 50;
+            estimatedProgress = 50 + (overage * 0.7); // 30% slower
+          }
+          if (estimatedProgress > 75) {
+            // After 75%, slow down even more
+            const overage = estimatedProgress - 75;
+            estimatedProgress = 75 + (overage * 0.5); // 50% slower
+          }
+
+          // Cap at 92% to leave room for smooth completion
+          estimatedProgress = Math.min(92, estimatedProgress);
+
+          if (estimatedProgress < 30) {
+            setProcessingProgress(Math.floor(estimatedProgress));
+            setProcessingStage("Uploading to server...");
+            const remaining = estimatedTime - elapsed;
+            setEstimatedTimeRemaining(`~${Math.ceil(remaining / 1000)} seconds remaining`);
+          } else if (estimatedProgress < 70) {
+            setProcessingProgress(Math.floor(estimatedProgress));
+            setProcessingStage("Running OCR analysis...");
+            const remaining = estimatedTime - elapsed;
+            setEstimatedTimeRemaining(`~${Math.ceil(remaining / 1000)} seconds remaining`);
+          } else {
+            setProcessingProgress(Math.floor(estimatedProgress));
+            setProcessingStage("Extracting data...");
+            const remaining = Math.max(3000, estimatedTime - elapsed); // Always show at least 3s remaining
+            if (remaining > 5000) {
+              setEstimatedTimeRemaining(`~${Math.ceil(remaining / 1000)} seconds remaining`);
+            } else {
+              setEstimatedTimeRemaining("Almost done...");
+            }
+          }
+        }, 1000); // Update every second
 
         // Call the API endpoint with timeout
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minute timeout
 
-        updateProgress(0.5, 1, "Server processing with Tesseract OCR...", startTime, 'backend');
+        try {
+          response = await fetch("/api/process-document", {
+            method: "POST",
+            body: formData,
+            signal: controller.signal,
+          });
 
-        response = await fetch("/api/process-document", {
-          method: "POST",
-          body: formData,
-          signal: controller.signal,
-        });
+          clearTimeout(timeoutId);
+          clearInterval(progressInterval);
 
-        clearTimeout(timeoutId);
+          setProcessingProgress(100);
+          setProcessingStage("Processing completed!");
+          setEstimatedTimeRemaining("Complete!");
 
-        updateProgress(1, 1, "Processing completed!", startTime, 'complete');
+        } catch (error) {
+          clearTimeout(timeoutId);
+          clearInterval(progressInterval);
+          throw error;
+        }
 
         if (!response.ok) {
           let errorMessage = `HTTP error! status: ${response.status}`;
@@ -697,9 +777,8 @@ export default function DocumentAssistant() {
       });
       
       if (response.ok) {
-        // Remove document from both states
+        // Remove document from state
         setDocumentHistory(prev => prev.filter(doc => doc.id !== documentToDelete.id));
-        setFilteredDocuments(prev => prev.filter(doc => doc.id !== documentToDelete.id));
         setShowDeleteDialog(false);
         setDocumentToDelete(null);
         console.log('Document deleted successfully');
@@ -749,10 +828,7 @@ export default function DocumentAssistant() {
         const updatedDoc = await response.json();
         
         // Update document in both states
-        setDocumentHistory(prev => prev.map(doc => 
-          doc.id === updatedDoc.id ? updatedDoc : doc
-        ));
-        setFilteredDocuments(prev => prev.map(doc => 
+        setDocumentHistory(prev => prev.map(doc =>
           doc.id === updatedDoc.id ? updatedDoc : doc
         ));
         
@@ -912,10 +988,9 @@ export default function DocumentAssistant() {
       });
       
       const deletedIds = await Promise.all(deletePromises);
-      
-      // Remove all deleted documents from both states
+
+      // Remove all deleted documents from state
       setDocumentHistory(prev => prev.filter(doc => !deletedIds.includes(doc.id)));
-      setFilteredDocuments(prev => prev.filter(doc => !deletedIds.includes(doc.id)));
       
       // Clear selection
       clearSelection();
@@ -1044,19 +1119,27 @@ export default function DocumentAssistant() {
                         {/* Time Remaining */}
                         {estimatedTimeRemaining && (
                           <div className="bg-muted/30 rounded-lg p-3 border">
-                            <div className="flex items-center justify-center space-x-2">
-                              <span className="text-lg">⏱️</span>
-                              <div className="text-center">
-                                <p className="text-sm font-medium text-foreground">{estimatedTimeRemaining}</p>
-                                {processingProgress > 0 && processingProgress < 100 && (
-                                  <p className="text-xs text-muted-foreground">
-                                    {processingProgress < 20 ? "Getting started..." :
-                                     processingProgress < 50 ? "Making good progress..." :
-                                     processingProgress < 80 ? "Almost there..." :
-                                     "Finishing up..."}
-                                  </p>
-                                )}
+                            <div className="flex items-center justify-between px-2">
+                              <div className="flex items-center space-x-2">
+                                <span className="text-lg">⏱️</span>
+                                <div>
+                                  <p className="text-sm font-semibold text-foreground">{estimatedTimeRemaining}</p>
+                                  {processingProgress > 0 && processingProgress < 100 && (
+                                    <p className="text-xs text-muted-foreground">
+                                      {processingProgress < 30 ? "Initializing OCR..." :
+                                       processingProgress < 50 ? "Processing document text..." :
+                                       processingProgress < 80 ? "Extracting data fields..." :
+                                       "Finalizing results..."}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
+                              {processingProgress > 0 && processingProgress < 100 && (
+                                <div className="text-right">
+                                  <p className="text-xs font-medium text-blue-600">{processingProgress}%</p>
+                                  <p className="text-xs text-muted-foreground">Complete</p>
+                                </div>
+                              )}
                             </div>
                           </div>
                         )}
@@ -1168,17 +1251,6 @@ export default function DocumentAssistant() {
                           <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center space-x-3">
                               <h4 className="font-medium text-foreground">Document {index + 1}</h4>
-                              {/* Confidence badge */}
-                              {getDocumentConfidence(processedDocument) > 0 && (
-                                <Badge 
-                                  variant={needsManualReview(processedDocument) ? 'destructive' : 'outline'}
-                                >
-                                  {needsManualReview(processedDocument) && (
-                                    <AlertTriangle className="w-3 h-3 mr-1" />
-                                  )}
-                                  {(getDocumentConfidence(processedDocument) * 100).toFixed(0)}% confidence
-                                </Badge>
-                              )}
                             </div>
                             <div className="flex space-x-2">
                               {/* Show edit button for low-confidence documents */}
@@ -1459,18 +1531,6 @@ export default function DocumentAssistant() {
                               <Badge variant={doc.status === 'Processed' ? 'default' : 'secondary'}>
                                 {doc.status}
                               </Badge>
-                              {/* Confidence indicator */}
-                              {getDocumentConfidence(doc) > 0 && (
-                                <Badge 
-                                  variant={needsManualReview(doc) ? 'destructive' : 'outline'}
-                                  className="ml-2"
-                                >
-                                  {needsManualReview(doc) && (
-                                    <AlertTriangle className="w-3 h-3 mr-1" />
-                                  )}
-                                  {(getDocumentConfidence(doc) * 100).toFixed(0)}% confidence
-                                </Badge>
-                              )}
                             </div>
                             
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
@@ -1726,12 +1786,6 @@ export default function DocumentAssistant() {
             </DialogTitle>
             <DialogDescription>
               Manually correct or complete the missing fields. Fields marked as "Not found" need your attention.
-              {documentToEdit && (
-                <Badge variant="destructive" className="ml-2 mt-2">
-                  <AlertTriangle className="w-3 h-3 mr-1" />
-                  {(getDocumentConfidence(documentToEdit) * 100).toFixed(0)}% confidence
-                </Badge>
-              )}
             </DialogDescription>
           </DialogHeader>
 
@@ -1818,9 +1872,9 @@ export default function DocumentAssistant() {
               <div className="bg-muted/30 p-3 rounded-md text-xs text-muted-foreground">
                 <p className="font-medium mb-1">📌 Tips:</p>
                 <ul className="list-disc list-inside space-y-1">
-                  <li>Fields marked with <span className="text-destructive">*</span> are critical for 70%+ confidence</li>
-                  <li>Optional fields improve overall confidence</li>
-                  <li>Confidence will be recalculated automatically after saving</li>
+                  <li>Fields marked with <span className="text-destructive">*</span> are critical for accurate processing</li>
+                  <li>Optional fields improve data completeness</li>
+                  <li>Changes will be saved to the database</li>
                 </ul>
               </div>
 
