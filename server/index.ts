@@ -186,7 +186,7 @@ export function createServer() {
 
   // Document processing routes
   app.use("/api", documentProcessingRouter);
-  
+
   // Document storage and retrieval routes
   app.get("/api/documents", async (req, res) => {
     try {

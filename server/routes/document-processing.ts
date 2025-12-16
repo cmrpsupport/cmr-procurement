@@ -3,7 +3,6 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 import { saveDocument, getAllDocuments, getDocumentById, deleteDocument } from '../database';
-import { processWithOCRSpace, processPDFWithOCRSpace } from '../services/ocr-space';
 import {
   validateSupplierName,
   validatePONumber,
@@ -11,6 +10,13 @@ import {
   calculateExtractionConfidence,
   cleanExtractedText
 } from '../services/extraction-enhancements.js';
+import Tesseract from 'tesseract.js';
+import { PDFDocument } from 'pdf-lib';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
+const PDFTOPPM_PATH = 'C:\\poppler-25.12.0\\Library\\bin\\pdftoppm.exe';
 
 const router = express.Router();
 
@@ -1206,16 +1212,29 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
     
     // Process image files
     if (req.file.mimetype.startsWith('image/')) {
-      console.log("🖼️ PROCESSING IMAGE FILE WITH OCR.SPACE");
+      console.log("🖼️ PROCESSING IMAGE FILE WITH TESSERACT");
       console.log("File path:", req.file.path);
       console.log("File name:", req.file.originalname);
 
-      // Use OCR.space for OCR
-      console.log("🔍 Starting OCR.space processing...");
-      const { text, confidence } = await processWithOCRSpace(req.file.path, req.file.mimetype);
+      // Use Tesseract for OCR with optimized settings
+      console.log("🔍 Starting Tesseract OCR processing...");
+      const { data: { text, confidence } } = await Tesseract.recognize(
+        req.file.path,
+        'eng',
+        {
+          logger: m => {
+            if (m.status === 'recognizing text') {
+              console.log(`   OCR progress: ${Math.round(m.progress * 100)}%`);
+            }
+          },
+          // Optimized Tesseract parameters
+          tessedit_pageseg_mode: Tesseract.PSM.AUTO, // Automatic page segmentation
+          tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,/-:()#@ '
+        }
+      );
 
       console.log("🎯 OCR completed, text length:", text.length);
-      console.log(`🎯 OCR confidence: ${(confidence * 100).toFixed(1)}%`);
+      console.log(`🎯 OCR confidence: ${confidence.toFixed(1)}%`);
       console.log("🎯 OCR raw text:");
       console.log(text);
       console.log("🎯 End OCR text");
@@ -1245,12 +1264,12 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
           documentType: "image_ocr",
           confidence: extractionConfidence, // Use extraction confidence, not OCR confidence
           // Add quality warning if OCR confidence is high but no data extracted
-          qualityWarning: (confidence > 0.6 && !extractedData.supplier && !extractedData.poNumber && !extractedData.doNumber)
+          qualityWarning: (confidence > 60 && !extractedData.supplier && !extractedData.poNumber && !extractedData.doNumber)
             ? "Poor scan quality - OCR detected text but could not extract data. Please use a higher quality scan."
             : undefined,
           rawData: {
             originalText: text,
-            ocrMethod: "tesseract",
+            ocrMethod: "tesseract_server",
             fileName: req.file.originalname,
             fileSize: req.file.size,
             ocrConfidence: confidence // Store OCR confidence separately
@@ -1290,20 +1309,65 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
 
         console.log(`📄 PDF has ${pageCount} pages`);
 
-        // Process PDF with OCR.space (will split if > 3 pages)
-        const pageResults = await processPDFWithOCRSpace(req.file.path, pageCount);
+        // Convert PDF to images using Poppler first
+        const tempDir = path.join(path.dirname(req.file.path), 'temp_pdf_pages');
+        if (!fs.existsSync(tempDir)) {
+          fs.mkdirSync(tempDir, { recursive: true });
+        }
 
-        // Single document or multiple pages
+        const timestamp = Date.now();
+        const outputPrefix = path.join(tempDir, `page_${timestamp}`);
+
+        console.log(`🔄 Converting PDF to images with Poppler...`);
+        const command = `"${PDFTOPPM_PATH}" -png -r 300 "${req.file.path}" "${outputPrefix}"`;
+        await execAsync(command);
+
+        // Get generated image files
+        const imageFiles = fs.readdirSync(tempDir)
+          .filter(f => f.startsWith(`page_${timestamp}`) && f.endsWith('.png'))
+          .sort((a, b) => {
+            const aNum = parseInt(a.match(/-(\d+)\.png$/)?.[1] || '0');
+            const bNum = parseInt(b.match(/-(\d+)\.png$/)?.[1] || '0');
+            return aNum - bNum;
+          });
+
+        console.log(`✅ Converted ${imageFiles.length} pages to images`);
+
+        // Process PDF with Tesseract
         const processedDocuments = [];
 
-        for (let i = 0; i < pageResults.length; i++) {
-          const pageResult = pageResults[i];
-          const extractedData = extractSimpleData(pageResult.text);
+        for (let i = 0; i < imageFiles.length; i++) {
+          const pageNum = i + 1;
+          const imagePath = path.join(tempDir, imageFiles[i]);
+
+          console.log(`\n📄 Processing page ${pageNum}/${pageCount}...`);
+          console.log(`🔍 Running Tesseract OCR on page ${pageNum}...`);
+
+          const { data: { text, confidence } } = await Tesseract.recognize(
+            imagePath,
+            'eng',
+            {
+              logger: m => {
+                if (m.status === 'recognizing text') {
+                  console.log(`   Page ${pageNum} OCR progress: ${Math.round(m.progress * 100)}%`);
+                }
+              },
+              // Optimized Tesseract parameters
+              tessedit_pageseg_mode: Tesseract.PSM.AUTO,
+              tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,/-:()#@ '
+            }
+          );
+
+          console.log(`✅ Page ${pageNum} OCR complete (confidence: ${confidence.toFixed(1)}%)`);
+          console.log(`   Extracted ${text.length} characters`);
+
+          const extractedData = extractSimpleData(text);
+          const extractionConfidence = calculateExtractionConfidence(extractedData, text);
 
           const result = {
-            id: (Date.now() + i).toString(),
-            originalName: pageResults.length > 1 ? `${req.file.originalname} (Page ${pageResult.pageNumber})` : req.file.originalname,
-            renamedName: `${extractedData.supplier || "Unknown"}_${extractedData.poNumber || "Unknown"}_${req.file.originalname}${pageResults.length > 1 ? `_Page${pageResult.pageNumber}` : ''}`,
+            id: (Date.now() + pageNum).toString(),
+            originalName: pageCount > 1 ? `${req.file.originalname} (Page ${pageNum})` : req.file.originalname,
+            renamedName: `${extractedData.supplier || "Unknown"}_${extractedData.poNumber || "Unknown"}_${req.file.originalname}${pageCount > 1 ? `_Page${pageNum}` : ''}`,
             type: req.file.mimetype,
             fileSize: req.file.size,
             status: "Processed" as const,
@@ -1315,20 +1379,21 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
             date: extractedData.date,
             extractedData: {
               ...extractedData,
-              documentType: pageResults.length > 1 ? "pdf_multipage" : "pdf_ocr",
-              confidence: pageResult.confidence,
+              documentType: pageCount > 1 ? "pdf_multipage_tesseract" : "pdf_tesseract",
+              confidence: extractionConfidence,
               pageCount: pageCount,
               // Add quality warning if OCR confidence is high but no data extracted
-              qualityWarning: (pageResult.confidence > 0.6 && !extractedData.supplier && !extractedData.poNumber && !extractedData.doNumber)
+              qualityWarning: (confidence > 60 && !extractedData.supplier && !extractedData.poNumber && !extractedData.doNumber)
                 ? "Poor scan quality - OCR detected text but could not extract data. Please use a higher quality scan."
                 : undefined,
               rawData: {
-                originalText: pageResult.text,
-                ocrMethod: "tesseract",
+                originalText: text,
+                ocrMethod: "tesseract_server_pdf",
                 fileName: req.file.originalname,
                 fileSize: req.file.size,
                 pageCount: pageCount,
-                pageIndex: pageResult.pageNumber
+                pageIndex: pageNum,
+                ocrConfidence: confidence
               }
             },
             filePath: null,
@@ -1338,7 +1403,16 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
           processedDocuments.push(result);
         }
 
-        // Clean up
+        // Clean up temp images
+        if (fs.existsSync(tempDir)) {
+          fs.readdirSync(tempDir).forEach(file => {
+            fs.unlinkSync(path.join(tempDir, file));
+          });
+          fs.rmdirSync(tempDir);
+          console.log('🗑️  Cleaned up temporary images');
+        }
+
+        // Clean up uploaded PDF
         if (fs.existsSync(req.file.path)) {
           fs.unlinkSync(req.file.path);
         }
