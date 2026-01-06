@@ -1,10 +1,11 @@
 # Use Node.js 18 base image
 FROM node:18
 
-# Install ImageMagick and Ghostscript
+# Install ImageMagick, Ghostscript, and Poppler for PDF processing
 RUN apt-get update && apt-get install -y \
     imagemagick \
     ghostscript \
+    poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory

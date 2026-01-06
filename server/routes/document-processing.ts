@@ -14,9 +14,14 @@ import Tesseract from 'tesseract.js';
 import { PDFDocument } from 'pdf-lib';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { preprocessImage, cleanupPreprocessedImages } from '../services/image-preprocessing';
 
 const execAsync = promisify(exec);
-const PDFTOPPM_PATH = 'C:\\poppler-25.12.0\\Library\\bin\\pdftoppm.exe';
+
+// Detect platform and use appropriate pdftoppm path
+const PDFTOPPM_PATH = process.platform === 'win32'
+  ? 'C:\\poppler-25.12.0\\Library\\bin\\pdftoppm.exe'  // Windows
+  : 'pdftoppm';  // Linux (installed via apt-get)
 
 const router = express.Router();
 
@@ -127,7 +132,9 @@ const extractSimpleData = (text: string) => {
       ];
 
       for (const pattern of companyPatterns) {
-        const matches = Array.from(fullText.matchAll(new RegExp(pattern.source, pattern.flags)));
+        // Ensure global flag is set for matchAll
+        const flags = pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g';
+        const matches = Array.from(fullText.matchAll(new RegExp(pattern.source, flags)));
         if (matches && matches.length > 0) {
           // Take the first match that's not too long (likely not a paragraph)
           for (const match of matches) {
@@ -1159,8 +1166,9 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
             const processedDocuments = [];
             for (let i = 0; i < multipleDocuments.length; i++) {
               const docData = multipleDocuments[i];
-        const extractedData = extractSimpleData(docData.text);
-              
+              console.log(`🔥 Document ${i + 1}: Extracting data...`);
+              const extractedData = extractSimpleData(docData.text);
+
               // Get actual confidence from extraction result
               const actualConfidence = extractedData.pageCount || 0; // We stored confidence in pageCount
               
@@ -1216,10 +1224,14 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
       console.log("File path:", req.file.path);
       console.log("File name:", req.file.originalname);
 
+      // Preprocess image for better OCR
+      console.log("📸 Preprocessing image...");
+      const preprocessedImagePath = await preprocessImage(req.file.path);
+
       // Use Tesseract for OCR with optimized settings
       console.log("🔍 Starting Tesseract OCR processing...");
       const { data: { text, confidence } } = await Tesseract.recognize(
-        req.file.path,
+        preprocessedImagePath,
         'eng',
         {
           logger: m => {
@@ -1232,6 +1244,11 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
           tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,/-:()#@ '
         }
       );
+
+      // Clean up preprocessed image
+      if (preprocessedImagePath !== req.file.path) {
+        cleanupPreprocessedImages([preprocessedImagePath]);
+      }
 
       console.log("🎯 OCR completed, text length:", text.length);
       console.log(`🎯 OCR confidence: ${confidence.toFixed(1)}%`);
@@ -1336,15 +1353,23 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
         // Process PDF with Tesseract
         const processedDocuments = [];
 
+        const preprocessedPaths: string[] = [];
+
         for (let i = 0; i < imageFiles.length; i++) {
           const pageNum = i + 1;
           const imagePath = path.join(tempDir, imageFiles[i]);
 
           console.log(`\n📄 Processing page ${pageNum}/${pageCount}...`);
+
+          // Preprocess image for better OCR
+          console.log(`📸 Preprocessing page ${pageNum}...`);
+          const preprocessedImagePath = await preprocessImage(imagePath);
+          preprocessedPaths.push(preprocessedImagePath);
+
           console.log(`🔍 Running Tesseract OCR on page ${pageNum}...`);
 
           const { data: { text, confidence } } = await Tesseract.recognize(
-            imagePath,
+            preprocessedImagePath,
             'eng',
             {
               logger: m => {
@@ -1361,6 +1386,7 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
           console.log(`✅ Page ${pageNum} OCR complete (confidence: ${confidence.toFixed(1)}%)`);
           console.log(`   Extracted ${text.length} characters`);
 
+          console.log(`🔥 Page ${pageNum}: Extracting data...`);
           const extractedData = extractSimpleData(text);
           const extractionConfidence = calculateExtractionConfidence(extractedData, text);
 
@@ -1402,6 +1428,9 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
           await saveDocument(result);
           processedDocuments.push(result);
         }
+
+        // Clean up preprocessed images
+        cleanupPreprocessedImages(preprocessedPaths);
 
         // Clean up temp images
         if (fs.existsSync(tempDir)) {
