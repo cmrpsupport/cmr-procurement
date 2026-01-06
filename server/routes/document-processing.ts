@@ -1144,9 +1144,27 @@ const splitMultiPagePDF = (fullText: string, originalFileName: string, fileSize:
   return documents;
 };
 
-// Process single document
+// DEPRECATED: Old synchronous endpoint - returns error to force cache refresh
+// This endpoint is no longer used. Please clear your browser cache (Ctrl+Shift+R) to use the new async endpoint.
 router.post('/process-document', upload.single('document'), async (req, res) => {
-  try {
+  console.log("⚠️⚠️⚠️ WARNING: Old synchronous /process-document endpoint called!");
+  console.log("⚠️ This endpoint is deprecated. Frontend should use /process-document-async instead.");
+  console.log("⚠️ User needs to hard refresh their browser (Ctrl+Shift+R or Cmd+Shift+R)");
+
+  // Clean up uploaded file
+  if (req.file?.path && fs.existsSync(req.file.path)) {
+    fs.unlinkSync(req.file.path);
+  }
+
+  return res.status(410).json({
+    error: "This endpoint has been replaced",
+    message: "Please refresh your browser with Ctrl+Shift+R (Windows/Linux) or Cmd+Shift+R (Mac) to load the latest version of the application.",
+    newEndpoint: "/api/process-document-async",
+    deprecated: true
+  });
+
+  // OLD CODE REMOVED - ALL FUNCTIONALITY MOVED TO /process-document-async
+  /* try {
     console.log("=== PROCESSING DOCUMENT ===");
     
       if (!req.file) {
@@ -1485,11 +1503,11 @@ router.post('/process-document', upload.single('document'), async (req, res) => 
       fs.unlinkSync(req.file.path);
     }
     
-    res.status(500).json({ 
-      error: "Failed to process document", 
+    res.status(500).json({
+      error: "Failed to process document",
       details: error instanceof Error ? error.message : "Unknown error"
     });
-  }
+  } */
 });
 
 // Get all documents
