@@ -15,6 +15,7 @@ const __dirname = dirname(__filename);
 import { handleDemo } from "./routes/demo";
 import documentProcessingRouter from "./routes/document-processing";
 import { initDatabase, getAllDocuments, getDocumentById, deleteDocument } from "./database";
+import { generateExcelReport, generateSingleDocumentExcel } from "./services/excel-export-service";
 
 // Helper function to generate CSV content from document data
 const generateCSVFromDocument = (doc: any): string => {
@@ -225,6 +226,65 @@ export function createServer() {
     } catch (error) {
       console.error("❌ Error generating CSV download:", error);
       res.status(500).json({ error: "Failed to generate CSV download" });
+    }
+  });
+
+  // Excel export - Single document
+  app.get("/api/documents/:id/excel", async (req, res) => {
+    console.log('🔥🔥🔥 EXCEL ENDPOINT HIT - Single document:', req.params.id);
+    try {
+      const document = await getDocumentById(req.params.id);
+      if (!document) {
+        console.log('❌ Document not found:', req.params.id);
+        return res.status(404).json({ error: "Document not found" });
+      }
+
+      console.log(`📊 Generating Excel export for document: ${document.originalName}`);
+
+      const excelBuffer = await generateSingleDocumentExcel(document);
+
+      const fileName = `${document.originalName.replace(/\.[^/.]+$/, '')}_export.xlsx`;
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Length', excelBuffer.length.toString());
+      res.send(excelBuffer);
+
+      console.log(`✅ Excel export sent: ${fileName}`);
+
+    } catch (error) {
+      console.error("❌ Error generating Excel export:", error);
+      res.status(500).json({ error: "Failed to generate Excel export" });
+    }
+  });
+
+  // Excel export - All documents (bulk)
+  app.get("/api/documents/export/excel-all", async (req, res) => {
+    console.log('🔥🔥🔥 EXCEL ENDPOINT HIT - Bulk export');
+    try {
+      const documents = await getAllDocuments();
+
+      if (!documents || documents.length === 0) {
+        console.log('❌ No documents found to export');
+        return res.status(404).json({ error: "No documents found to export" });
+      }
+
+      console.log(`📊 Generating bulk Excel export for ${documents.length} documents`);
+
+      const excelBuffer = await generateExcelReport(documents);
+
+      const fileName = `CMR_Procurement_Export_${new Date().toISOString().split('T')[0]}.xlsx`;
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Length', excelBuffer.length.toString());
+      res.send(excelBuffer);
+
+      console.log(`✅ Bulk Excel export sent: ${fileName} (${documents.length} documents)`);
+
+    } catch (error) {
+      console.error("❌ Error generating bulk Excel export:", error);
+      res.status(500).json({ error: "Failed to generate bulk Excel export" });
     }
   });
 

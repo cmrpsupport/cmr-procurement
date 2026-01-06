@@ -1,11 +1,12 @@
+// Excel export support added
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  ArrowLeft, 
+  ArrowLeft,
   Upload,
   FileText,
   Brain,
-  Loader2, 
+  Loader2,
   Download,
   Eye,
   X,
@@ -18,7 +19,8 @@ import {
   Hash,
   Trash2,
   Edit,
-  AlertTriangle
+  AlertTriangle,
+  FileSpreadsheet
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -736,11 +738,11 @@ export default function DocumentAssistant() {
   const downloadDocument = useCallback(async (doc: Document) => {
     console.log('CSV download button clicked for document:', doc);
     console.log('Document ID:', doc.id);
-    
+
     try {
       const response = await fetch(`/api/documents/${doc.id}/download`);
       console.log('CSV download response:', response);
-      
+
       if (response.ok) {
         const blob = await response.blob();
         const url = window.URL.createObjectURL(blob);
@@ -760,6 +762,66 @@ export default function DocumentAssistant() {
     } catch (error) {
       console.error('Failed to download CSV:', error);
       alert('Failed to download CSV: ' + error.message);
+    }
+  }, []);
+
+  const downloadExcel = useCallback(async (doc: Document) => {
+    console.log('Excel download button clicked for document:', doc);
+    console.log('Document ID:', doc.id);
+
+    try {
+      const response = await fetch(`/api/documents/${doc.id}/excel`);
+      console.log('Excel download response:', response);
+
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${doc.supplier || 'Unknown'}_${doc.poNumber || 'Unknown'}_export.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        console.log('Excel download triggered successfully');
+      } else {
+        const errorText = await response.text();
+        console.error('Excel download failed:', response.status, errorText);
+        alert(`Excel download failed: ${errorText}`);
+      }
+    } catch (error) {
+      console.error('Failed to download Excel:', error);
+      alert('Failed to download Excel: ' + error.message);
+    }
+  }, []);
+
+  const downloadAllExcel = useCallback(async () => {
+    console.log('Bulk Excel download clicked');
+
+    try {
+      const response = await fetch(`/api/documents/export/excel-all`);
+      console.log('Bulk Excel download response:', response);
+
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const date = new Date().toISOString().split('T')[0];
+        a.download = `CMR_Procurement_Export_${date}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+        console.log('Bulk Excel download triggered successfully');
+      } else {
+        const errorText = await response.text();
+        console.error('Bulk Excel download failed:', response.status, errorText);
+        alert(`Bulk Excel download failed: ${errorText}`);
+      }
+    } catch (error) {
+      console.error('Failed to download bulk Excel:', error);
+      alert('Failed to download bulk Excel: ' + error.message);
     }
   }, []);
 
@@ -1292,6 +1354,15 @@ export default function DocumentAssistant() {
                               >
                                 <Download className="w-4 h-4" />
                               </Button>
+                              <Button
+                                variant="default"
+                                size="sm"
+                                onClick={() => downloadExcel(processedDocument)}
+                                title="Download Excel"
+                                className="bg-green-600 hover:bg-green-700"
+                              >
+                                <FileSpreadsheet className="w-4 h-4" />
+                              </Button>
                             </div>
                           </div>
                           <div className="grid grid-cols-2 gap-4 text-sm">
@@ -1340,14 +1411,15 @@ export default function DocumentAssistant() {
                     >
                       <Search className="w-4 h-4" />
                     </Button>
-                    <Button 
+                    <Button
+                      variant="outline"
                       onClick={() => {
                         // Download all documents as a combined CSV
                         const allCsvContent = processedDocuments.map((doc, index) => {
                           const csvContent = generateCSVFromDocument(doc);
                           return `Document ${index + 1}: ${doc.originalName}\n${csvContent}\n\n`;
                         }).join('');
-                        
+
                         const blob = new Blob([allCsvContent], { type: 'text/csv' });
                         const url = window.URL.createObjectURL(blob);
                         const a = document.createElement('a');
@@ -1358,9 +1430,17 @@ export default function DocumentAssistant() {
                         document.body.removeChild(a);
                         window.URL.revokeObjectURL(url);
                       }}
-                      title="Download All Results"
+                      title="Download All as CSV"
                     >
                       <Download className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="default"
+                      onClick={downloadAllExcel}
+                      title="Export All to Excel"
+                      className="bg-green-600 hover:bg-green-700"
+                    >
+                      <FileSpreadsheet className="w-4 h-4" />
                     </Button>
                   </div>
                 </div>
@@ -1446,6 +1526,15 @@ export default function DocumentAssistant() {
                         >
                           <Download className="w-4 h-4" />
                           <span>Download CSV</span>
+                        </Button>
+                        <Button
+                          variant="default"
+                          size="sm"
+                          onClick={downloadAllExcel}
+                          className="flex items-center space-x-2 bg-green-600 hover:bg-green-700"
+                        >
+                          <FileSpreadsheet className="w-4 h-4" />
+                          <span>Export All to Excel</span>
                         </Button>
                         <Button
                           variant="outline"
@@ -1589,6 +1678,15 @@ export default function DocumentAssistant() {
                               title="Download CSV"
                             >
                               <Download className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              variant="default"
+                              size="sm"
+                              onClick={() => downloadExcel(doc)}
+                              title="Download Excel"
+                              className="bg-green-600 hover:bg-green-700"
+                            >
+                              <FileSpreadsheet className="w-4 h-4" />
                             </Button>
                             <Button
                               variant="outline"
