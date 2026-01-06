@@ -23,6 +23,9 @@ const PDFTOPPM_PATH = process.platform === 'win32'
   ? 'C:\\poppler-25.12.0\\Library\\bin\\pdftoppm.exe'  // Windows
   : 'pdftoppm';  // Linux (installed via apt-get)
 
+console.log(`🔍 Platform detected: ${process.platform}`);
+console.log(`📍 Using pdftoppm path: ${PDFTOPPM_PATH}`);
+
 const router = express.Router();
 
 // Configure multer for file uploads
