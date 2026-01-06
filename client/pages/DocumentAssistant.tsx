@@ -432,26 +432,53 @@ export default function DocumentAssistant() {
           }
         }, 1000); // Update every second
 
-        // Call the API endpoint with timeout
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 180000); // 3 minute timeout
-
+        // Start async processing (returns immediately)
         try {
-          response = await fetch("/api/process-document", {
+          const uploadResponse = await fetch("/api/process-document-async", {
             method: "POST",
             body: formData,
-            signal: controller.signal,
           });
 
-          clearTimeout(timeoutId);
-          clearInterval(progressInterval);
+          if (!uploadResponse.ok) {
+            throw new Error(`Upload failed: ${uploadResponse.status}`);
+          }
 
-          setProcessingProgress(100);
-          setProcessingStage("Processing completed!");
-          setEstimatedTimeRemaining("Complete!");
+          const { jobId } = await uploadResponse.json();
+          console.log(`Started async job: ${jobId}`);
+
+          // Poll for job status
+          let jobComplete = false;
+          while (!jobComplete) {
+            await new Promise(resolve => setTimeout(resolve, 2000)); // Poll every 2 seconds
+
+            const statusResponse = await fetch(`/api/job-status/${jobId}`);
+            if (!statusResponse.ok) {
+              throw new Error(`Status check failed: ${statusResponse.status}`);
+            }
+
+            const job = await statusResponse.json();
+            console.log(`Job ${jobId} status:`, job.status, `${job.progress}%`);
+
+            // Update progress
+            setProcessingProgress(job.progress);
+            if (job.currentPage && job.totalPages) {
+              setProcessingStage(`Processing page ${job.currentPage}/${job.totalPages}...`);
+            }
+
+            if (job.status === 'completed') {
+              jobComplete = true;
+              response = { ok: true, json: async () => job.result } as Response;
+              clearInterval(progressInterval);
+              setProcessingProgress(100);
+              setProcessingStage("Processing completed!");
+              setEstimatedTimeRemaining("Complete!");
+            } else if (job.status === 'failed') {
+              clearInterval(progressInterval);
+              throw new Error(job.error || 'Processing failed');
+            }
+          }
 
         } catch (error) {
-          clearTimeout(timeoutId);
           clearInterval(progressInterval);
           throw error;
         }

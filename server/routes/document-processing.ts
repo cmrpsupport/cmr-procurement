@@ -15,6 +15,7 @@ import { PDFDocument } from 'pdf-lib';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { preprocessImage, cleanupPreprocessedImages } from '../services/image-preprocessing';
+import { jobQueue } from '../services/job-queue';
 
 const execAsync = promisify(exec);
 
@@ -1699,6 +1700,209 @@ router.delete('/documents/:id', async (req, res) => {
     res.status(500).json({ error: "Failed to delete document" });
   }
 });
+
+// ========================================
+// ASYNC PROCESSING ENDPOINTS
+// ========================================
+
+// Get job status
+router.get('/job-status/:jobId', async (req, res) => {
+  try {
+    const job = jobQueue.getJob(req.params.jobId);
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    res.json(job);
+  } catch (error) {
+    console.error("Error getting job status:", error);
+    res.status(500).json({ error: "Failed to get job status" });
+  }
+});
+
+// Async document upload - returns immediately with job ID
+router.post('/process-document-async', upload.single('document'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    // Create job immediately
+    const jobId = jobQueue.createJob(req.file.originalname);
+
+    // Return job ID immediately
+    res.json({
+      jobId,
+      message: 'Processing started',
+      status: 'pending'
+    });
+
+    // Process in background
+    processDocumentAsync(jobId, req.file, req.body).catch(error => {
+      console.error(`❌ Background processing failed for job ${jobId}:`, error);
+      jobQueue.setJobFailed(jobId, error.message);
+    });
+
+  } catch (error) {
+    console.error("Error starting async processing:", error);
+    res.status(500).json({ error: "Failed to start processing" });
+  }
+});
+
+// Background processing function
+async function processDocumentAsync(jobId: string, file: Express.Multer.File, body: any) {
+  try {
+    console.log(`\n=== ASYNC PROCESSING JOB ${jobId} ===`);
+    console.log("File:", file.originalname, "Type:", file.mimetype, "Size:", file.size);
+
+    // Handle PDF files with Tesseract OCR
+    if (file.mimetype === 'application/pdf') {
+      console.log("📄 PROCESSING PDF FILE WITH TESSERACT OCR (ASYNC)");
+
+      jobQueue.setJobProcessing(jobId);
+
+      // Get PDF page count
+      const { PDFDocument: PDFDoc } = await import('pdf-lib');
+      const pdfBytes = fs.readFileSync(file.path);
+      const pdfDoc = await PDFDoc.load(pdfBytes);
+      const pageCount = pdfDoc.getPageCount();
+
+      console.log(`📄 PDF has ${pageCount} pages`);
+      jobQueue.setJobProcessing(jobId, pageCount);
+
+      // Convert PDF to images using Poppler
+      const tempDir = path.join(path.dirname(file.path), 'temp_pdf_pages');
+      if (!fs.existsSync(tempDir)) {
+        fs.mkdirSync(tempDir, { recursive: true });
+      }
+
+      const timestamp = Date.now();
+      const outputPrefix = path.join(tempDir, `page_${timestamp}`);
+
+      console.log(`🔄 Converting PDF to images with Poppler...`);
+      const command = `"${PDFTOPPM_PATH}" -png -r 300 "${file.path}" "${outputPrefix}"`;
+      await execAsync(command);
+
+      // Get generated image files
+      const imageFiles = fs.readdirSync(tempDir)
+        .filter(f => f.startsWith(`page_${timestamp}`) && f.endsWith('.png'))
+        .sort((a, b) => {
+          const aNum = parseInt(a.match(/-(\d+)\.png$/)?.[1] || '0');
+          const bNum = parseInt(b.match(/-(\d+)\.png$/)?.[1] || '0');
+          return aNum - bNum;
+        });
+
+      console.log(`✅ Converted ${imageFiles.length} pages to images`);
+
+      // Process each page
+      const processedDocuments = [];
+      const preprocessedPaths: string[] = [];
+
+      for (let i = 0; i < imageFiles.length; i++) {
+        const pageNum = i + 1;
+        const imagePath = path.join(tempDir, imageFiles[i]);
+
+        console.log(`\n📄 Processing page ${pageNum}/${pageCount}...`);
+        jobQueue.updateProgress(jobId, pageNum, pageCount);
+
+        // Preprocess image
+        console.log(`📸 Preprocessing page ${pageNum}...`);
+        const preprocessedImagePath = await preprocessImage(imagePath);
+        preprocessedPaths.push(preprocessedImagePath);
+
+        console.log(`🔍 Running Tesseract OCR on page ${pageNum}...`);
+        const { data: { text, confidence } } = await Tesseract.recognize(
+          preprocessedImagePath,
+          'eng',
+          {
+            logger: m => {
+              if (m.status === 'recognizing text') {
+                console.log(`   Page ${pageNum} OCR progress: ${Math.round(m.progress * 100)}%`);
+              }
+            },
+            tessedit_pageseg_mode: Tesseract.PSM.AUTO,
+            tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789.,/-:()#@ '
+          }
+        );
+
+        console.log(`✅ Page ${pageNum} OCR complete (confidence: ${confidence.toFixed(1)}%)`);
+        console.log(`🔥 Page ${pageNum}: Extracting data...`);
+
+        const extractedData = extractSimpleData(text);
+        const extractionConfidence = calculateExtractionConfidence(extractedData, text);
+
+        const result = {
+          id: (Date.now() + pageNum).toString(),
+          originalName: pageCount > 1 ? `${file.originalname} (Page ${pageNum})` : file.originalname,
+          renamedName: `${extractedData.supplier || "Unknown"}_${extractedData.poNumber || "Unknown"}_${file.originalname}${pageCount > 1 ? `_Page${pageNum}` : ''}`,
+          type: file.mimetype,
+          fileSize: file.size,
+          status: "Processed" as const,
+          supplier: extractedData.supplier,
+          poNumber: extractedData.poNumber,
+          projectNumber: extractedData.projectNumber,
+          jobNumber: extractedData.jobNumber,
+          doNumber: extractedData.doNumber,
+          date: extractedData.date,
+          extractedData: {
+            ...extractedData,
+            documentType: pageCount > 1 ? "pdf_multipage_tesseract_async" : "pdf_tesseract_async",
+            confidence: extractionConfidence,
+            pageCount: pageCount,
+            qualityWarning: (confidence > 60 && !extractedData.supplier && !extractedData.poNumber && !extractedData.doNumber)
+              ? "Poor scan quality - OCR detected text but could not extract data. Please use a higher quality scan."
+              : undefined,
+            rawData: {
+              originalText: text,
+              ocrMethod: "tesseract_server_pdf_async",
+              fileName: file.originalname,
+              fileSize: file.size,
+              pageCount: pageCount,
+              pageIndex: pageNum,
+              ocrConfidence: confidence
+            }
+          },
+          filePath: null,
+        };
+
+        await saveDocument(result);
+        processedDocuments.push(result);
+      }
+
+      // Cleanup
+      cleanupPreprocessedImages(preprocessedPaths);
+      if (fs.existsSync(tempDir)) {
+        fs.readdirSync(tempDir).forEach(f => fs.unlinkSync(path.join(tempDir, f)));
+        fs.rmdirSync(tempDir);
+        console.log('🗑️  Cleaned up temporary images');
+      }
+      if (fs.existsSync(file.path)) {
+        fs.unlinkSync(file.path);
+      }
+
+      // Mark job as complete
+      const result = processedDocuments.length === 1
+        ? processedDocuments[0]
+        : {
+            results: processedDocuments,
+            processedCount: processedDocuments.length,
+            multiDocument: true
+          };
+
+      jobQueue.setJobCompleted(jobId, result);
+      console.log(`✅ Job ${jobId} completed successfully`);
+    } else {
+      throw new Error('Async processing only supports PDF files currently');
+    }
+  } catch (error) {
+    console.error(`❌ Job ${jobId} failed:`, error);
+    jobQueue.setJobFailed(jobId, error instanceof Error ? error.message : 'Unknown error');
+
+    // Cleanup on error
+    if (fs.existsSync(file.path)) {
+      fs.unlinkSync(file.path);
+    }
+  }
+}
 
 // Router is exported as default for use in server/index.ts
 
