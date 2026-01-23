@@ -239,9 +239,16 @@ export function createServer() {
         return res.status(404).json({ error: "Document not found" });
       }
 
-      console.log(`📊 Generating Excel export for document: ${document.originalName}`);
+      console.log(`📊 Generating Excel export for SINGLE document:`);
+      console.log(`   ID: ${document.id}`);
+      console.log(`   Original Name: ${document.originalName}`);
+      console.log(`   Supplier: ${document.supplier}`);
+      console.log(`   PO Number: ${document.poNumber}`);
+      console.log(`   DO Number: ${document.doNumber}`);
 
       const excelBuffer = await generateSingleDocumentExcel(document);
+
+      console.log(`✅ Excel buffer generated, size: ${excelBuffer.length} bytes`);
 
       const fileName = `${document.originalName.replace(/\.[^/.]+$/, '')}_export.xlsx`;
 

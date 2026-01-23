@@ -21,6 +21,11 @@ interface DocumentData {
  * Generate Excel file with multiple sheets from document data
  */
 export async function generateExcelReport(documents: DocumentData[]): Promise<Buffer> {
+  console.log(`📊 generateExcelReport called with ${documents.length} document(s):`);
+  documents.forEach((doc, index) => {
+    console.log(`   ${index + 1}. ID: ${doc.id}, Name: ${doc.originalName}, Supplier: ${doc.supplier}`);
+  });
+
   const workbook = new ExcelJS.Workbook();
 
   // Set workbook properties
