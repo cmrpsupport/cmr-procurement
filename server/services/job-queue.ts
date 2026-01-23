@@ -50,9 +50,20 @@ class JobQueue {
     });
   }
 
-  updateProgress(jobId: string, currentPage: number, totalPages: number) {
+  updateProgress(jobId: string, currentPage: number, totalPages: number, ocrProgress?: number) {
     // Progress: 5% start, 5-95% processing, 95-100% saving
-    const processingProgress = 5 + (currentPage / totalPages) * 90;
+    // Each page gets an equal portion of the 90% processing range
+    const pageSize = 90 / totalPages;
+
+    // Base progress for completed pages
+    const completedPagesProgress = (currentPage - 1) * pageSize;
+
+    // Current page OCR progress (0-100% within this page's allocation)
+    const currentPageProgress = ocrProgress ? (ocrProgress / 100) * pageSize : 0;
+
+    // Total progress
+    const processingProgress = 5 + completedPagesProgress + currentPageProgress;
+
     this.updateJob(jobId, {
       currentPage,
       totalPages,

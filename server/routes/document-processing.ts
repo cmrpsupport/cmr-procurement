@@ -1820,7 +1820,6 @@ async function processDocumentAsync(jobId: string, file: Express.Multer.File, bo
         const imagePath = path.join(tempDir, imageFiles[i]);
 
         console.log(`\n📄 Processing page ${pageNum}/${pageCount}...`);
-        jobQueue.updateProgress(jobId, pageNum, pageCount);
 
         // Preprocess image
         console.log(`📸 Preprocessing page ${pageNum}...`);
@@ -1834,7 +1833,10 @@ async function processDocumentAsync(jobId: string, file: Express.Multer.File, bo
           {
             logger: m => {
               if (m.status === 'recognizing text') {
-                console.log(`   Page ${pageNum} OCR progress: ${Math.round(m.progress * 100)}%`);
+                const ocrProgress = Math.round(m.progress * 100);
+                console.log(`   Page ${pageNum} OCR progress: ${ocrProgress}%`);
+                // Update job progress with OCR progress
+                jobQueue.updateProgress(jobId, pageNum, pageCount, ocrProgress);
               }
             },
             tessedit_pageseg_mode: Tesseract.PSM.AUTO,
