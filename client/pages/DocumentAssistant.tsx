@@ -1210,9 +1210,8 @@ export default function DocumentAssistant() {
                             )}
                           </div>
                           {totalPages > 1 ? (
-                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <div className="text-xs text-muted-foreground">
                               <span>Page {Math.ceil(currentPageProgress)} of {totalPages}</span>
-                              <span>{((currentPageProgress / totalPages) * 100).toFixed(0)}% pages complete</span>
                             </div>
                           ) : totalPages === 1 && (
                             <p className="text-xs text-muted-foreground">
@@ -1224,27 +1223,19 @@ export default function DocumentAssistant() {
                         {/* Time Remaining */}
                         {estimatedTimeRemaining && (
                           <div className="bg-muted/30 rounded-lg p-3 border">
-                            <div className="flex items-center justify-between px-2">
-                              <div className="flex items-center space-x-2">
-                                <span className="text-lg">⏱️</span>
-                                <div>
-                                  <p className="text-sm font-semibold text-foreground">{estimatedTimeRemaining}</p>
-                                  {processingProgress > 0 && processingProgress < 100 && (
-                                    <p className="text-xs text-muted-foreground">
-                                      {processingProgress < 30 ? "Initializing OCR..." :
-                                       processingProgress < 50 ? "Processing document text..." :
-                                       processingProgress < 80 ? "Extracting data fields..." :
-                                       "Finalizing results..."}
-                                    </p>
-                                  )}
-                                </div>
+                            <div className="flex items-center space-x-2 px-2">
+                              <span className="text-lg">⏱️</span>
+                              <div>
+                                <p className="text-sm font-semibold text-foreground">{estimatedTimeRemaining}</p>
+                                {processingProgress > 0 && processingProgress < 100 && (
+                                  <p className="text-xs text-muted-foreground">
+                                    {processingProgress < 30 ? "Initializing OCR..." :
+                                     processingProgress < 50 ? "Processing document text..." :
+                                     processingProgress < 80 ? "Extracting data fields..." :
+                                     "Finalizing results..."}
+                                  </p>
+                                )}
                               </div>
-                              {processingProgress > 0 && processingProgress < 100 && (
-                                <div className="text-right">
-                                  <p className="text-xs font-medium text-blue-600">{processingProgress}%</p>
-                                  <p className="text-xs text-muted-foreground">Complete</p>
-                                </div>
-                              )}
                             </div>
                           </div>
                         )}
