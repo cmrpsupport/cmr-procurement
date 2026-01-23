@@ -229,7 +229,37 @@ export function createServer() {
     }
   });
 
-  // Excel export - Single document
+  // Excel export - All documents (bulk) - MUST BE BEFORE :id route to avoid conflict
+  app.get("/api/documents/export/excel-all", async (req, res) => {
+    console.log('🔥🔥🔥 EXCEL ENDPOINT HIT - Bulk export');
+    try {
+      const documents = await getAllDocuments();
+
+      if (!documents || documents.length === 0) {
+        console.log('❌ No documents found to export');
+        return res.status(404).json({ error: "No documents found to export" });
+      }
+
+      console.log(`📊 Generating bulk Excel export for ${documents.length} documents`);
+
+      const excelBuffer = await generateExcelReport(documents);
+
+      const fileName = `CMR_Procurement_Export_${new Date().toISOString().split('T')[0]}.xlsx`;
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Length', excelBuffer.length.toString());
+      res.send(excelBuffer);
+
+      console.log(`✅ Bulk Excel export sent: ${fileName} (${documents.length} documents)`);
+
+    } catch (error) {
+      console.error("❌ Error generating bulk Excel export:", error);
+      res.status(500).json({ error: "Failed to generate bulk Excel export" });
+    }
+  });
+
+  // Excel export - Single document (MUST BE AFTER export/excel-all but BEFORE generic :id routes)
   app.get("/api/documents/:id/excel", async (req, res) => {
     console.log('🔥🔥🔥 EXCEL ENDPOINT HIT - Single document:', req.params.id);
     try {
@@ -262,36 +292,6 @@ export function createServer() {
     } catch (error) {
       console.error("❌ Error generating Excel export:", error);
       res.status(500).json({ error: "Failed to generate Excel export" });
-    }
-  });
-
-  // Excel export - All documents (bulk)
-  app.get("/api/documents/export/excel-all", async (req, res) => {
-    console.log('🔥🔥🔥 EXCEL ENDPOINT HIT - Bulk export');
-    try {
-      const documents = await getAllDocuments();
-
-      if (!documents || documents.length === 0) {
-        console.log('❌ No documents found to export');
-        return res.status(404).json({ error: "No documents found to export" });
-      }
-
-      console.log(`📊 Generating bulk Excel export for ${documents.length} documents`);
-
-      const excelBuffer = await generateExcelReport(documents);
-
-      const fileName = `CMR_Procurement_Export_${new Date().toISOString().split('T')[0]}.xlsx`;
-
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
-      res.setHeader('Content-Length', excelBuffer.length.toString());
-      res.send(excelBuffer);
-
-      console.log(`✅ Bulk Excel export sent: ${fileName} (${documents.length} documents)`);
-
-    } catch (error) {
-      console.error("❌ Error generating bulk Excel export:", error);
-      res.status(500).json({ error: "Failed to generate bulk Excel export" });
     }
   });
 
