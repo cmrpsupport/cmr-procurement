@@ -1820,6 +1820,8 @@ async function processDocumentAsync(jobId: string, file: Express.Multer.File, bo
         const imagePath = path.join(tempDir, imageFiles[i]);
 
         console.log(`\n📄 Processing page ${pageNum}/${pageCount}...`);
+        // Update progress to show we're starting this page (with 0% OCR progress)
+        jobQueue.updateProgress(jobId, pageNum, pageCount, 0);
 
         // Preprocess image
         console.log(`📸 Preprocessing page ${pageNum}...`);

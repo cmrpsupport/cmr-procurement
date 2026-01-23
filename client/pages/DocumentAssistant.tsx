@@ -446,6 +446,9 @@ export default function DocumentAssistant() {
           const { jobId } = await uploadResponse.json();
           console.log(`Started async job: ${jobId}`);
 
+          // Clear the time-based progress interval since we now have real progress from backend
+          clearInterval(progressInterval);
+
           // Poll for job status
           let jobComplete = false;
           while (!jobComplete) {
@@ -459,7 +462,7 @@ export default function DocumentAssistant() {
             const job = await statusResponse.json();
             console.log(`Job ${jobId} status:`, job.status, `${job.progress}%`);
 
-            // Update progress
+            // Update progress from real backend data
             setProcessingProgress(job.progress);
             if (job.currentPage && job.totalPages) {
               setProcessingStage(`Processing page ${job.currentPage}/${job.totalPages}...`);
