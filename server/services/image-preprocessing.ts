@@ -13,6 +13,7 @@ interface PreprocessingOptions {
   enhanceContrast?: boolean;
   sharpen?: boolean;
   threshold?: boolean;
+  autoRotate?: boolean; // Automatically detect and correct rotation
 }
 
 /**
@@ -28,7 +29,8 @@ export async function preprocessImage(
     denoise: true,
     enhanceContrast: true,
     sharpen: true,
-    threshold: true
+    threshold: true,
+    autoRotate: true
   }
 ): Promise<string> {
   try {
@@ -39,6 +41,12 @@ export async function preprocessImage(
     // Get image metadata
     const metadata = await image.metadata();
     console.log(`   Original: ${metadata.width}x${metadata.height}, format: ${metadata.format}`);
+
+    // Auto-rotate based on EXIF orientation data (handles camera rotations)
+    if (options.autoRotate) {
+      console.log(`   ✓ Auto-rotating based on EXIF orientation`);
+      image = image.rotate(); // Sharp automatically reads EXIF and rotates correctly
+    }
 
     // Convert to grayscale for better OCR
     image = image.grayscale();
