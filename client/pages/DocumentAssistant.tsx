@@ -823,11 +823,27 @@ export default function DocumentAssistant() {
   }, []);
 
   const downloadAllExcel = useCallback(async () => {
-    console.log('Bulk Excel download clicked');
+    console.log('Session Excel download clicked');
+
+    // Get IDs from current session's processed documents
+    const documentIds = processedDocuments.map(doc => doc.id);
+
+    if (documentIds.length === 0) {
+      alert('No documents to export in current session');
+      return;
+    }
+
+    console.log(`Exporting ${documentIds.length} documents from current session:`, documentIds);
 
     try {
-      const response = await fetch(`/api/documents/export/excel-all`);
-      console.log('Bulk Excel download response:', response);
+      const response = await fetch(`/api/documents/export/excel-selected`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ documentIds }),
+      });
+      console.log('Session Excel download response:', response);
 
       if (response.ok) {
         const blob = await response.blob();
@@ -835,22 +851,22 @@ export default function DocumentAssistant() {
         const a = document.createElement('a');
         a.href = url;
         const date = new Date().toISOString().split('T')[0];
-        a.download = `CMR_Procurement_Export_${date}.xlsx`;
+        a.download = `CMR_Procurement_Session_Export_${date}.xlsx`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         window.URL.revokeObjectURL(url);
-        console.log('Bulk Excel download triggered successfully');
+        console.log('Session Excel download triggered successfully');
       } else {
         const errorText = await response.text();
-        console.error('Bulk Excel download failed:', response.status, errorText);
-        alert(`Bulk Excel download failed: ${errorText}`);
+        console.error('Session Excel download failed:', response.status, errorText);
+        alert(`Session Excel download failed: ${errorText}`);
       }
     } catch (error) {
-      console.error('Failed to download bulk Excel:', error);
-      alert('Failed to download bulk Excel: ' + error.message);
+      console.error('Failed to download session Excel:', error);
+      alert('Failed to download session Excel: ' + error.message);
     }
-  }, []);
+  }, [processedDocuments]);
 
   const handleDeleteClick = useCallback((doc: Document) => {
     setDocumentToDelete(doc);

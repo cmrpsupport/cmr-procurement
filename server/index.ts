@@ -229,9 +229,55 @@ export function createServer() {
     }
   });
 
+  // Excel export - Selected documents by IDs (current session) - MUST BE BEFORE :id route to avoid conflict
+  app.post("/api/documents/export/excel-selected", async (req, res) => {
+    console.log('🔥🔥🔥 EXCEL ENDPOINT HIT - Selected documents export');
+    try {
+      const { documentIds } = req.body;
+
+      if (!documentIds || !Array.isArray(documentIds) || documentIds.length === 0) {
+        console.log('❌ No document IDs provided');
+        return res.status(400).json({ error: "No document IDs provided" });
+      }
+
+      console.log(`📊 Fetching ${documentIds.length} documents by ID...`);
+
+      // Fetch all documents by their IDs
+      const documents = [];
+      for (const id of documentIds) {
+        const doc = await getDocumentById(id);
+        if (doc) {
+          documents.push(doc);
+        }
+      }
+
+      if (documents.length === 0) {
+        console.log('❌ No documents found with provided IDs');
+        return res.status(404).json({ error: "No documents found with provided IDs" });
+      }
+
+      console.log(`📊 Generating Excel export for ${documents.length} selected documents`);
+
+      const excelBuffer = await generateExcelReport(documents);
+
+      const fileName = `CMR_Procurement_Session_Export_${new Date().toISOString().split('T')[0]}.xlsx`;
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+      res.setHeader('Content-Length', excelBuffer.length.toString());
+      res.send(excelBuffer);
+
+      console.log(`✅ Selected documents Excel export sent: ${fileName} (${documents.length} documents)`);
+
+    } catch (error) {
+      console.error("❌ Error generating selected Excel export:", error);
+      res.status(500).json({ error: "Failed to generate selected Excel export" });
+    }
+  });
+
   // Excel export - All documents (bulk) - MUST BE BEFORE :id route to avoid conflict
   app.get("/api/documents/export/excel-all", async (req, res) => {
-    console.log('🔥🔥🔥 EXCEL ENDPOINT HIT - Bulk export');
+    console.log('🔥🔥🔥 EXCEL ENDPOINT HIT - Bulk export (ALL historical documents)');
     try {
       const documents = await getAllDocuments();
 
